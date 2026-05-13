@@ -13,6 +13,7 @@ import 'components/dashboard.dart';
 import 'components/camera_scanner.dart';
 import 'services/storage_service.dart';
 import 'types.dart';
+import 'services/gemini_service.dart';
 
 void main() async { 
   WidgetsFlutterBinding.ensureInitialized();
@@ -88,73 +89,93 @@ class _HomePageState extends State<HomePage> {
   // MEKA THAMAI ALUTH "PRO AI BRAIN" EKA 🔥
   // ==========================================================
   Future<void> _processReceipt(String imagePath) async {
-    setState(() {
-      showScanner = false;
-      isAnalyzing = true;
-    });
+  setState(() {
+    showScanner = false;
+    isAnalyzing = true;
+    analysisError = null;
+  });
 
-    try {
-      // 1. Text Recognizer eken Photo eke thiyena akuru tika mulin kiyawagannawa
-      final inputImage = InputImage.fromFilePath(imagePath);
-      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
-      
-      String fullText = recognizedText.text;
-      List<String> lines = fullText.split('\n');
-      textRecognizer.close();
+  try {
+    final extractedData = await GeminiService.analyzeReceipt(imagePath);
 
-      // 2. Aluth Entity Extractor Model eka start karanawa
-      // Meken thama e akuru asse thiyena "Theruma" (Dates, Money) allanne
-      final entityExtractor = EntityExtractor(language: EntityExtractorLanguage.english);
-      final annotations = await entityExtractor.annotateText(fullText);
-
-      String shopName = lines.isNotEmpty ? lines.first.trim() : "Unknown Shop";
-      double totalAmount = 0.0;
-      String date = DateTime.now().toIso8601String(); // Default date eka ada dawasa
-
-      // AI eka hoyagaththa dewal (Annotations) asse yanawa
-      for (final annotation in annotations) {
-        for (final entity in annotation.entities) {
-          
-          // A. Salli Ganan (Money) model eken alluwada balanawa
-          if (entity.type == EntityType.money) {
-            // "Rs 1500" wage aawoth akuru tika ain karala 1500 gannawa
-            String moneyText = annotation.text.replaceAll(RegExp(r'[^0-9.]'), '');
-            double val = double.tryParse(moneyText) ?? 0.0;
-            
-            // Receipt ekaka thiyena loku ma ganana apage "Total" eka widihata gannawa
-            if (val > totalAmount) {
-              totalAmount = val;
-            }
-          }
-          
-          // B. Dawasa (Date/Time) model eken alluwada balanawa
-          else if (entity.type == EntityType.dateTime) {
-            date = annotation.text; // AI eka extract karapu dawasa ehemma gannawa
-          }
-        }
-      }
-      
-      entityExtractor.close();
-
-      // 3. Database ekata save karanawa
-      await FirebaseFirestore.instance.collection('receipts').add({
-        'storeName': shopName,
-        'totalAmount': totalAmount,
-        'date': date,
-        'category': 'Other', 
-        'rawText': fullText, 
-      });
-
-      // 4. App eke UI eka update karanawa
-      await _loadData();
-
-    } catch (e) {
-      setState(() => analysisError = "Error scanning: $e");
-    } finally {
-      setState(() => isAnalyzing = false);
+    // Check if receipt is readable
+    if (extractedData['isReadable'] != true) {
+      setState(() => analysisError = "Receipt is not readable. Please try again with a clearer image.");
+      return;
     }
+
+    // Parse category
+    Category category;
+    try {
+      category = Category.values.firstWhere(
+        (e) => e.name == (extractedData['category'] ?? 'Other'),
+        orElse: () => Category.Other,
+      );
+    } catch (_) {
+      category = Category.Other;
+    }
+
+    // Parse items
+    final List<ReceiptItem> items = [];
+    if (extractedData['items'] != null) {
+      for (final item in extractedData['items']) {
+        Category itemCategory;
+        try {
+          itemCategory = Category.values.firstWhere(
+            (e) => e.name == (item['category'] ?? 'Other'),
+            orElse: () => Category.Other,
+          );
+        } catch (_) {
+          itemCategory = Category.Other;
+        }
+        items.add(ReceiptItem(
+          name: item['name'] ?? 'Unknown Item',
+          price: (item['price'] as num?)?.toDouble() ?? 0.0,
+          category: itemCategory,
+        ));
+      }
+    }
+
+    // Build Receipt object
+    final now = DateTime.now();
+    final newReceipt = Receipt(
+      id: now.millisecondsSinceEpoch.toString(),
+      storeName: extractedData['storeName'] ?? 'Unknown Store',
+      date: extractedData['date'] ?? now.toIso8601String().split('T')[0],
+      time: extractedData['time'] ?? now.toIso8601String().split('T')[1].substring(0, 5),
+      items: items,
+      total: (extractedData['total'] as num?)?.toDouble() ?? 0.0,
+      category: category,
+      timestamp: now.millisecondsSinceEpoch,
+    );
+
+    // Save to local storage
+    setState(() {
+      receipts.add(newReceipt);
+    });
+    await _saveData();
+
+    // Also save to Firebase (optional, non-blocking)
+    try {
+      await FirebaseFirestore.instance.collection('receipts').add({
+        'storeName': newReceipt.storeName,
+        'totalAmount': newReceipt.total,
+        'date': newReceipt.date,
+        'category': newReceipt.category.name,
+        'items': items.map((i) => {'name': i.name, 'price': i.price, 'category': i.category.name}).toList(),
+      });
+    } catch (firebaseError) {
+      debugPrint('Firebase save failed (non-critical): $firebaseError');
+    }
+
+    await _loadData();
+
+  } catch (e) {
+    setState(() => analysisError = "Error scanning: $e");
+  } finally {
+    setState(() => isAnalyzing = false);
   }
+}
   // ==========================================================
 
   Future<void> _pickFromGallery() async {

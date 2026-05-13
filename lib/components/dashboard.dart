@@ -17,10 +17,9 @@ class Dashboard extends StatelessWidget {
     // Last 7 days spending
     final last7Days = List.generate(7, (i) {
       final date = DateTime.now().subtract(Duration(days: i));
+      final dateFormat = DateFormat('dd.MM.yyyy');
       final dayTotal = receipts
-          .where((r) => DateTime.parse(r.date).day == date.day &&
-                        DateTime.parse(r.date).month == date.month &&
-                        DateTime.parse(r.date).year == date.year)
+          .where((r) => dateFormat.parse(r.date.replaceAll('-', '.')).day == date.day) 
           .fold<double>(0.0, (sum, r) => sum + r.total);
       return BarChartGroupData(
         x: i, // <-- Fix eka methanai! (.toDouble() eka ain kala)

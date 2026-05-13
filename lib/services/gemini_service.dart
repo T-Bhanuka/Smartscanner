@@ -1,11 +1,18 @@
 import 'dart:convert';
+import 'dart:io'; // <-- Meka aluthin damma (File eka read karanna)
 import 'package:http/http.dart' as http;
 import '../types.dart';
 
 class GeminiService {
-  static const String _apiKey = 'YOUR_API_KEY_HERE';
+    static const String _apiKey = 'AIzaSyAIGjOs2s9-9DGZo8PLHUgfVLWN4J6L6Lo';
 
-  static Future<Map<String, dynamic>> analyzeReceipt(String base64Image) async {
+  // Methana parameter eka 'imagePath' kiyala wenas kala
+  static Future<Map<String, dynamic>> analyzeReceipt(String imagePath) async {
+    
+    // 1. Phone eken photo eka aragena Base64 walata convert karana eka
+    final bytes = await File(imagePath).readAsBytes();
+    final base64Image = base64Encode(bytes);
+
     final categories = Category.values.map((e) => e.name).join(", ");
     final prompt = '''
 You are a high-precision OCR and financial analysis agent. 
@@ -29,9 +36,7 @@ Return ONLY a valid JSON object following the provided schema, with no markdown 
 
     try {
       final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey'),        body: jsonEncode({
           'contents': [
             {
               'parts': [
@@ -39,7 +44,7 @@ Return ONLY a valid JSON object following the provided schema, with no markdown 
                 {
                   'inlineData': {
                     'mimeType': 'image/jpeg',
-                    'data': base64Image,
+                    'data': base64Image, // Dan mekata yanne aththa image data eka
                   }
                 }
               ]
@@ -79,7 +84,9 @@ Return ONLY a valid JSON object following the provided schema, with no markdown 
         if (response.statusCode == 429) {
           throw Exception('Rate limit exceeded. Please wait about 15 seconds and try again.');
         }
-        throw Exception('Failed to analyze receipt');
+        // Error eka awoth mokakda kiyala hariyatama balaganna print ekak damma
+        print("Gemini API Error Body: ${response.body}");
+        throw Exception('API Error: ${response.body}');
       }
 
       final body = jsonDecode(response.body);
