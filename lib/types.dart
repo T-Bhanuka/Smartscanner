@@ -20,6 +20,7 @@ class Receipt {
   final double total;
   final Category category;
   final int timestamp;
+  final String? rawText;
   final String? galleryImageId;
 
   Receipt({
@@ -31,6 +32,7 @@ class Receipt {
     required this.total,
     required this.category,
     required this.timestamp,
+    this.rawText,
     this.galleryImageId,
   });
 
@@ -43,6 +45,7 @@ class Receipt {
     'total': total,
     'category': category.name,
     'timestamp': timestamp,
+    'rawText': rawText,
     'galleryImageId': galleryImageId,
   };
 
@@ -55,6 +58,7 @@ class Receipt {
     total: (json['total'] as num).toDouble(),
     category: Category.values.firstWhere((e) => e.name == json['category']),
     timestamp: json['timestamp'],
+    rawText: json['rawText'] as String?,
     galleryImageId: json['galleryImageId'],
   );
 }
