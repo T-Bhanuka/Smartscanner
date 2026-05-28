@@ -1,16 +1,29 @@
 import 'dart:convert';
 import 'dart:io'; // <-- Meka aluthin damma (File eka read karanna)
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img; // <-- Image compress karanna damma
 import '../types.dart';
 
 class GeminiService {
-    static const String _apiKey = 'AIzaSyAIGjOs2s9-9DGZo8PLHUgfVLWN4J6L6Lo';
+    static const String _apiKey = 'AIzaSyDXd7Ex98CCh4T8UsAegY4nIY2Itvs8Xs0';
 
   // Methana parameter eka 'imagePath' kiyala wenas kala
   static Future<Map<String, dynamic>> analyzeReceipt(String imagePath) async {
     
-    // 1. Phone eken photo eka aragena Base64 walata convert karana eka
-    final bytes = await File(imagePath).readAsBytes();
+    // 1. Phone eken photo eka aragena compress karala Base64 walata convert karana eka
+    Uint8List bytes = await File(imagePath).readAsBytes();
+    
+    // Image eka decode karala compress karanawa
+    img.Image? image = img.decodeImage(bytes);
+    if (image != null) {
+      if (image.width > 800) {
+        image = img.copyResize(image, width: 800);
+      }
+      bytes = img.encodeJpg(image, quality: 70);
+    }
+    
     final base64Image = base64Encode(bytes);
 
     final categories = Category.values.map((e) => e.name).join(", ");
@@ -36,7 +49,9 @@ Return ONLY a valid JSON object following the provided schema, with no markdown 
 
     try {
       final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey'),        body: jsonEncode({
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
           'contents': [
             {
               'parts': [
@@ -78,7 +93,7 @@ Return ONLY a valid JSON object following the provided schema, with no markdown 
             }
           }
         }),
-      );
+      ).timeout(const Duration(seconds: 90));
 
       if (response.statusCode != 200) {
         if (response.statusCode == 429) {
@@ -92,6 +107,8 @@ Return ONLY a valid JSON object following the provided schema, with no markdown 
       final body = jsonDecode(response.body);
       final text = body['candidates'][0]['content']['parts'][0]['text'] ?? '{}';
       return jsonDecode(text);
+    } on TimeoutException {
+      throw Exception('Request timed out. The scan took too long (maybe slow internet). Please try again.');
     } catch (e) {
       throw Exception('Gemini Analysis Error: $e');
     }

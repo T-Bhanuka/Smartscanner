@@ -1,26 +1,18 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:google_mlkit_entity_extraction/google_mlkit_entity_extraction.dart'; // Aluth AI Model eka
+import 'dart:convert';
+import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 
-import 'firebase_options.dart';
 import 'components/dashboard.dart';
 import 'components/camera_scanner.dart';
 import 'services/storage_service.dart';
 import 'types.dart';
-import 'services/gemini_service.dart';
+import 'services/api_service.dart';
 
-void main() async { 
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final cameras = await availableCameras();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
   runApp(MyApp(cameras: cameras));
 }
 
@@ -71,126 +63,145 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadData() async {
-    final loadedReceipts = await StorageService.getAllReceipts();
-    final loadedImages = await StorageService.getAllGalleryImages();
-    final budget = await StorageService.getMonthlyBudget();
+    try {
+      debugPrint('SmartScan: Loading data...');
+      final token = await StorageService.getToken();
+      if (token == null || token.isEmpty) {
+        debugPrint('SmartScan: No token found. Performing silent auth...');
+        await _performSilentAuth();
+      }
+
+      await _fetchData();
+      debugPrint('SmartScan: Data loaded successfully.');
+    } catch (e, stack) {
+      debugPrint('SmartScan: Error loading data: $e');
+      debugPrint('SmartScan: Stacktrace: $stack');
+      if (e.toString().contains('401')) {
+        try {
+          debugPrint(
+            'SmartScan: 401 error. Clearing token and retrying silent auth...',
+          );
+          await StorageService.clearToken();
+          await _performSilentAuth();
+          await _fetchData();
+          debugPrint('SmartScan: Retry after silent auth successful.');
+          return;
+        } catch (authError) {
+          debugPrint('SmartScan: Silent auth retry failed: $authError');
+          setState(() {
+            analysisError = 'Authentication failed: $authError';
+          });
+          return;
+        }
+      }
+      setState(() {
+        analysisError = 'Failed to load data: $e';
+      });
+    }
+  }
+
+  Future<void> _performSilentAuth() async {
+    try {
+      debugPrint('SmartScan: Registering user...');
+      await ApiService.register('User', 'user@example.com', 'password123');
+      debugPrint('SmartScan: Registration successful.');
+    } catch (e) {
+      debugPrint('SmartScan: Registration failed ($e). Trying to log in...');
+      await ApiService.login('user@example.com', 'password123');
+      debugPrint('SmartScan: Login successful.');
+    }
+  }
+
+  Future<void> _fetchData() async {
+    final receiptsData = await ApiService.getAllReceipts();
+    final loadedReceipts = (receiptsData)
+        .map((r) => Receipt.fromJson(r))
+        .toList();
+
+    final galleryData = await ApiService.getGalleryImages();
+    final loadedImages = (galleryData)
+        .map((r) => GalleryImage.fromJson(r))
+        .toList();
+
+    final currentMonth = DateTime.now().toIso8601String().substring(0, 7);
+    final budgetData = await ApiService.getBudget(currentMonth);
+
     setState(() {
       receipts = loadedReceipts;
-      galleryImages = loadedImages..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      monthlyBudget = budget;
+      galleryImages = loadedImages
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final budgetVal = budgetData['budget'] ?? budgetData['limit'] ?? 20000;
+      monthlyBudget = budgetVal is num
+          ? budgetVal.toDouble()
+          : (double.tryParse(budgetVal.toString()) ?? 20000.0);
+      analysisError = null; // Clear error on success
     });
   }
 
   Future<void> _saveData() async {
-    await StorageService.saveReceipts(receipts, monthlyBudget);
+    try {
+      final currentMonth = DateTime.now().toIso8601String().substring(0, 7);
+      await ApiService.updateBudget(currentMonth, monthlyBudget);
+    } catch (e) {
+      debugPrint('Error saving data: $e');
+    }
   }
 
   // ==========================================================
   // MEKA THAMAI ALUTH "PRO AI BRAIN" EKA 🔥
   // ==========================================================
   Future<void> _processReceipt(String imagePath) async {
-  setState(() {
-    showScanner = false;
-    isAnalyzing = true;
-    analysisError = null;
-  });
-
-  try {
-    final extractedData = await GeminiService.analyzeReceipt(imagePath);
-
-    // Check if receipt is readable
-    if (extractedData['isReadable'] != true) {
-      setState(() => analysisError = "Receipt is not readable. Please try again with a clearer image.");
-      return;
-    }
-
-    // Parse category
-    Category category;
-    try {
-      category = Category.values.firstWhere(
-        (e) => e.name == (extractedData['category'] ?? 'Other'),
-        orElse: () => Category.Other,
-      );
-    } catch (_) {
-      category = Category.Other;
-    }
-
-    // Parse items
-    final List<ReceiptItem> items = [];
-    if (extractedData['items'] != null) {
-      for (final item in extractedData['items']) {
-        Category itemCategory;
-        try {
-          itemCategory = Category.values.firstWhere(
-            (e) => e.name == (item['category'] ?? 'Other'),
-            orElse: () => Category.Other,
-          );
-        } catch (_) {
-          itemCategory = Category.Other;
-        }
-        items.add(ReceiptItem(
-          name: item['name'] ?? 'Unknown Item',
-          price: (item['price'] as num?)?.toDouble() ?? 0.0,
-          category: itemCategory,
-        ));
-      }
-    }
-
-    // Build Receipt object
-    final now = DateTime.now();
-    final newReceipt = Receipt(
-      id: now.millisecondsSinceEpoch.toString(),
-      storeName: extractedData['storeName'] ?? 'Unknown Store',
-      date: extractedData['date'] ?? now.toIso8601String().split('T')[0],
-      time: extractedData['time'] ?? now.toIso8601String().split('T')[1].substring(0, 5),
-      items: items,
-      total: (extractedData['total'] as num?)?.toDouble() ?? 0.0,
-      category: category,
-      timestamp: now.millisecondsSinceEpoch,
-    );
-
-    // Save to local storage
     setState(() {
-      receipts.add(newReceipt);
+      showScanner = false;
+      isAnalyzing = true;
+      analysisError = null;
     });
-    await _saveData();
 
-    // Also save to Firebase (optional, non-blocking)
     try {
-      await FirebaseFirestore.instance.collection('receipts').add({
-        'storeName': newReceipt.storeName,
-        'totalAmount': newReceipt.total,
-        'date': newReceipt.date,
-        'category': newReceipt.category.name,
-        'items': items.map((i) => {'name': i.name, 'price': i.price, 'category': i.category.name}).toList(),
-      });
-    } catch (firebaseError) {
-      debugPrint('Firebase save failed (non-critical): $firebaseError');
+      final bytes = await File(imagePath).readAsBytes();
+      final base64Image = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+
+      final response = await ApiService.analyzeReceipt(base64Image);
+
+      // Upload to gallery linked to the new receipt
+      try {
+        final receiptData = response['receipt'];
+        final String? receiptId = receiptData != null
+            ? (receiptData['_id'] ?? receiptData['id'])?.toString()
+            : null;
+        await ApiService.uploadImage(base64Image, receiptId: receiptId);
+      } catch (uploadError) {
+        debugPrint('Failed to save receipt image to vault: $uploadError');
+      }
+
+      // Receipt is already saved on backend
+      await _loadData();
+    } catch (e) {
+      setState(() => analysisError = "Error scanning: $e");
+    } finally {
+      setState(() => isAnalyzing = false);
     }
-
-    await _loadData();
-
-  } catch (e) {
-    setState(() => analysisError = "Error scanning: $e");
-  } finally {
-    setState(() => isAnalyzing = false);
   }
-}
   // ==========================================================
 
   Future<void> _pickFromGallery() async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    
+    // imageQuality saha maxWidth eken photo eka 10MB idala 500KB walata wage podi karanawa!
+    final pickedFile = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 50,
+      maxWidth: 1000,
+    );
+
     if (pickedFile != null) {
-      setState(() => isFabOpen = false); 
-      await _processReceipt(pickedFile.path); 
+      setState(() => isFabOpen = false);
+      await _processReceipt(pickedFile.path);
     }
   }
 
   void _showImageSourceOptions() {
     setState(() => isFabOpen = true);
-    
+
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E293B),
@@ -233,7 +244,11 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Widget _buildOptionBtn({required IconData icon, required String label, required VoidCallback onTap}) {
+  Widget _buildOptionBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -249,8 +264,11 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 8),
           Text(
-            label, 
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),
@@ -269,8 +287,14 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
-        title: const Text("Delete Target", style: TextStyle(color: Colors.white)),
-        content: const Text("Are you sure?", style: TextStyle(color: Colors.white70)),
+        title: const Text(
+          "Delete Target",
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          "Are you sure?",
+          style: TextStyle(color: Colors.white70),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -281,7 +305,11 @@ class _HomePageState extends State<HomePage> {
               setState(() {
                 galleryImages.removeWhere((img) => img.id == id);
               });
-              StorageService.deleteGalleryImage(id);
+              try {
+                ApiService.deleteGalleryImage(id);
+              } catch (e) {
+                debugPrint('Failed to delete image on backend: $e');
+              }
               Navigator.pop(context);
             },
             child: const Text("Delete", style: TextStyle(color: Colors.red)),
@@ -297,7 +325,10 @@ class _HomePageState extends State<HomePage> {
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
         title: const Text("Delete Bill", style: TextStyle(color: Colors.white)),
-        content: const Text("Delete this bill?", style: TextStyle(color: Colors.white70)),
+        content: const Text(
+          "Delete this bill?",
+          style: TextStyle(color: Colors.white70),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -308,7 +339,11 @@ class _HomePageState extends State<HomePage> {
               setState(() {
                 receipts.removeWhere((r) => r.id == id);
               });
-              _saveData();
+              try {
+                ApiService.deleteReceipt(id);
+              } catch (e) {
+                debugPrint('Failed to delete receipt on backend: $e');
+              }
               Navigator.pop(context);
             },
             child: const Text("Delete", style: TextStyle(color: Colors.red)),
@@ -331,14 +366,20 @@ class _HomePageState extends State<HomePage> {
                   padding: const EdgeInsets.all(16),
                   decoration: const BoxDecoration(
                     color: Color(0xFF1E293B),
-                    border: Border(bottom: BorderSide(color: Color(0xFF334155))),
+                    border: Border(
+                      bottom: BorderSide(color: Color(0xFF334155)),
+                    ),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Row(
                         children: [
-                          Icon(Icons.qr_code_scanner, color: Colors.white, size: 28),
+                          Icon(
+                            Icons.qr_code_scanner,
+                            color: Colors.white,
+                            size: 28,
+                          ),
                           SizedBox(width: 12),
                           Text(
                             'SmartScan Pro',
@@ -353,7 +394,10 @@ class _HomePageState extends State<HomePage> {
                       GestureDetector(
                         onTap: _changeBudget,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFF334155),
                             borderRadius: BorderRadius.circular(20),
@@ -393,7 +437,11 @@ class _HomePageState extends State<HomePage> {
                         ),
                         IconButton(
                           onPressed: () => setState(() => analysisError = null),
-                          icon: const Icon(Icons.close, color: Color(0xFF818CF8), size: 20),
+                          icon: const Icon(
+                            Icons.close,
+                            color: Color(0xFF818CF8),
+                            size: 20,
+                          ),
                         ),
                       ],
                     ),
@@ -402,7 +450,10 @@ class _HomePageState extends State<HomePage> {
                   child: IndexedStack(
                     index: activeTab,
                     children: [
-                      Dashboard(receipts: receipts, monthlyBudget: monthlyBudget),
+                      Dashboard(
+                        receipts: receipts,
+                        monthlyBudget: monthlyBudget,
+                      ),
                       _buildGalleryTab(),
                       _buildHistoryTab(),
                     ],
@@ -417,7 +468,10 @@ class _HomePageState extends State<HomePage> {
               child: FloatingActionButton(
                 onPressed: _showImageSourceOptions,
                 backgroundColor: const Color(0xFF8B5CF6),
-                child: Icon(isFabOpen ? Icons.close : Icons.add, color: Colors.white),
+                child: Icon(
+                  isFabOpen ? Icons.close : Icons.add,
+                  color: Colors.white,
+                ),
               ),
             ),
             // Bottom nav
@@ -426,7 +480,10 @@ class _HomePageState extends State<HomePage> {
               left: 0,
               right: 0,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 40,
+                  vertical: 16,
+                ),
                 decoration: const BoxDecoration(
                   color: Color(0xFF1E293B),
                   border: Border(top: BorderSide(color: Color(0xFF334155))),
@@ -445,7 +502,7 @@ class _HomePageState extends State<HomePage> {
             if (showScanner)
               Positioned.fill(
                 child: CameraScanner(
-                  onCapture: _processReceipt, 
+                  onCapture: _processReceipt,
                   onClose: () => setState(() => showScanner = false),
                 ),
               ),
@@ -472,7 +529,9 @@ class _HomePageState extends State<HomePage> {
           Text(
             label,
             style: TextStyle(
-              color: isActive ? const Color(0xFF818CF8) : const Color(0xFF64748B),
+              color: isActive
+                  ? const Color(0xFF818CF8)
+                  : const Color(0xFF64748B),
               fontSize: 9,
               fontWeight: FontWeight.bold,
             ),
@@ -541,16 +600,23 @@ class _HomePageState extends State<HomePage> {
               ),
               child: Stack(
                 children: [
-                  Container(
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.image, color: Color(0xFF64748B), size: 48),
-                  ),
+                  Positioned.fill(child: _buildGalleryImage(img.base64)),
                   Positioned(
                     top: 8,
                     right: 8,
-                    child: IconButton(
-                      onPressed: () => _deleteGalleryItem(img.id),
-                      icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        onPressed: () => _deleteGalleryItem(img.id),
+                        icon: const Icon(
+                          Icons.delete,
+                          color: Colors.red,
+                          size: 20,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -562,57 +628,104 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildGalleryImage(String base64Str) {
+    if (base64Str.isEmpty) {
+      return const Center(
+        child: Icon(Icons.image, color: Color(0xFF64748B), size: 48),
+      );
+    }
+    try {
+      final cleanBase64 = base64Str.replaceFirst(
+        RegExp(r'data:image/\w+;base64,'),
+        '',
+      );
+      final decodedBytes = base64Decode(cleanBase64.trim());
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Image.memory(
+          decodedBytes,
+          fit: BoxFit.cover,
+          width: double.infinity,
+          height: double.infinity,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Error decoding base64 image: $e');
+      return const Center(
+        child: Icon(Icons.broken_image, color: Colors.red, size: 48),
+      );
+    }
+  }
+
   Widget _buildHistoryTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
-      children: receipts.map((receipt) => Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E293B).withValues(alpha: 0.8),
-          border: Border.all(color: const Color(0xFF334155)),
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      children: receipts
+          .map(
+            (receipt) => Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B).withValues(alpha: 0.8),
+                border: Border.all(color: const Color(0xFF334155)),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    receipt.storeName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          receipt.storeName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          receipt.date,
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    receipt.date,
-                    style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                  Column(
+                    children: [
+                      const Text(
+                        'Rs.',
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        receipt.total.toStringAsFixed(2),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  IconButton(
+                    onPressed: () => _deleteReceipt(receipt.id),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Color(0xFFEF4444),
+                      size: 20,
+                    ),
                   ),
                 ],
               ),
             ),
-            Column(
-              children: [
-                const Text(
-                  'Rs.',
-                  style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                ),
-                Text(
-                  receipt.total.toStringAsFixed(2),
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            IconButton(
-              onPressed: () => _deleteReceipt(receipt.id),
-              icon: const Icon(Icons.close, color: Color(0xFFEF4444), size: 20),
-            ),
-          ],
-        ),
-      )).toList(),
+          )
+          .toList(),
     );
   }
 
@@ -661,8 +774,12 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Expanded(
                       child: TextButton(
-                        onPressed: () => setState(() => showBudgetModal = false),
-                        child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B))),
+                        onPressed: () =>
+                            setState(() => showBudgetModal = false),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(color: Color(0xFF64748B)),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 16),
@@ -678,8 +795,16 @@ class _HomePageState extends State<HomePage> {
                             _saveData();
                           }
                         },
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
-                        child: const Text('Save', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF8B5CF6),
+                        ),
+                        child: const Text(
+                          'Save',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ),
                   ],

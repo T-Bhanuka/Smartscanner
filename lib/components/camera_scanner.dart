@@ -23,12 +23,7 @@ class _CameraScannerState extends State<CameraScanner> {
 
   Future<void> _initializeCamera() async {
     final cameras = await availableCameras();
-    final camera = cameras.firstWhere(
-      (camera) => camera.lensDirection == CameraLensDirection.back,
-      orElse: () => cameras.first,
-    );
-
-    _controller = CameraController(camera, ResolutionPreset.high);
+    _controller = CameraController(cameras[0], ResolutionPreset.medium);
     await _controller!.initialize();
     if (mounted) setState(() {});
   }

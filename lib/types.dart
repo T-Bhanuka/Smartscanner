@@ -46,17 +46,45 @@ class Receipt {
     'galleryImageId': galleryImageId,
   };
 
-  factory Receipt.fromJson(Map<String, dynamic> json) => Receipt(
-    id: json['id'],
-    storeName: json['storeName'],
-    date: json['date'],
-    time: json['time'],
-    items: (json['items'] as List).map((e) => ReceiptItem.fromJson(e)).toList(),
-    total: (json['total'] as num).toDouble(),
-    category: Category.values.firstWhere((e) => e.name == json['category']),
-    timestamp: json['timestamp'],
-    galleryImageId: json['galleryImageId'],
-  );
+  factory Receipt.fromJson(Map<String, dynamic> json) {
+    Category parsedCategory = Category.Other;
+    try {
+      parsedCategory = Category.values.firstWhere(
+        (e) => e.name.toLowerCase() == (json['category'] ?? '').toString().toLowerCase(),
+        orElse: () => Category.Other,
+      );
+    } catch (_) {}
+
+    int parsedTimestamp = 0;
+    final tsValue = json['timestamp'] ?? json['createdAt'];
+    if (tsValue is int) {
+      parsedTimestamp = tsValue;
+    } else if (tsValue is String) {
+      final parsed = DateTime.tryParse(tsValue);
+      if (parsed != null) {
+        parsedTimestamp = parsed.millisecondsSinceEpoch;
+      }
+    } else {
+      final parsed = DateTime.tryParse(json['date'] ?? '');
+      if (parsed != null) {
+        parsedTimestamp = parsed.millisecondsSinceEpoch;
+      }
+    }
+
+    return Receipt(
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
+      storeName: (json['storeName'] ?? 'Unknown Store').toString(),
+      date: (json['date'] ?? '').toString(),
+      time: (json['time'] ?? '').toString(),
+      items: json['items'] is List
+          ? (json['items'] as List).map((e) => ReceiptItem.fromJson(e)).toList()
+          : [],
+      total: (json['total'] as num?)?.toDouble() ?? 0.0,
+      category: parsedCategory,
+      timestamp: parsedTimestamp,
+      galleryImageId: json['galleryImageId']?.toString(),
+    );
+  }
 }
 
 class ReceiptItem {
@@ -76,11 +104,21 @@ class ReceiptItem {
     'category': category.name,
   };
 
-  factory ReceiptItem.fromJson(Map<String, dynamic> json) => ReceiptItem(
-    name: json['name'],
-    price: json['price'],
-    category: Category.values.firstWhere((e) => e.name == json['category']),
-  );
+  factory ReceiptItem.fromJson(Map<String, dynamic> json) {
+    Category parsedCategory = Category.Other;
+    try {
+      parsedCategory = Category.values.firstWhere(
+        (e) => e.name.toLowerCase() == (json['category'] ?? '').toString().toLowerCase(),
+        orElse: () => Category.Other,
+      );
+    } catch (_) {}
+
+    return ReceiptItem(
+      name: (json['name'] ?? '').toString(),
+      price: (json['price'] as num?)?.toDouble() ?? 0.0,
+      category: parsedCategory,
+    );
+  }
 }
 
 class GalleryImage {
@@ -106,11 +144,23 @@ class GalleryImage {
     'linkedReceiptId': linkedReceiptId,
   };
 
-  factory GalleryImage.fromJson(Map<String, dynamic> json) => GalleryImage(
-    id: json['id'],
-    base64: json['base64'],
-    timestamp: json['timestamp'],
-    isProcessed: json['isProcessed'] ?? false,
-    linkedReceiptId: json['linkedReceiptId'],
-  );
+  factory GalleryImage.fromJson(Map<String, dynamic> json) {
+    int parsedTimestamp = 0;
+    final tsValue = json['timestamp'] ?? json['createdAt'];
+    if (tsValue is int) {
+      parsedTimestamp = tsValue;
+    } else if (tsValue is String) {
+      final parsed = DateTime.tryParse(tsValue);
+      if (parsed != null) {
+        parsedTimestamp = parsed.millisecondsSinceEpoch;
+      }
+    }
+    return GalleryImage(
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
+      base64: (json['base64'] ?? json['imageUrl'] ?? '').toString(),
+      timestamp: parsedTimestamp,
+      isProcessed: json['isProcessed'] == true || json['isProcessed']?.toString() == 'true',
+      linkedReceiptId: (json['linkedReceiptId'] ?? json['receipt'])?.toString(),
+    );
+  }
 }

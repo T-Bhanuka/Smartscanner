@@ -19,10 +19,10 @@ class Dashboard extends StatelessWidget {
       final date = DateTime.now().subtract(Duration(days: i));
       final dateFormat = DateFormat('dd.MM.yyyy');
       final dayTotal = receipts
-          .where((r) => dateFormat.parse(r.date.replaceAll('-', '.')).day == date.day) 
+          .where((r) => dateFormat.parse(r.date.replaceAll('-', '.').replaceAll('/', '.')).day == date.day)
           .fold<double>(0.0, (sum, r) => sum + r.total);
       return BarChartGroupData(
-        x: i, // <-- Fix eka methanai! (.toDouble() eka ain kala)
+        x: i,
         barRods: [
           BarChartRodData(
             toY: dayTotal,
@@ -101,50 +101,69 @@ class Dashboard extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Spent this month',
-                          style: TextStyle(
-                            color: Color(0xFF64748B),
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                    // ==========================================
+                    // UI Fix: Expanded and FittedBox applied here
+                    // ==========================================
+                    Expanded(
+                      flex: 6,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Spent this month',
+                            style: TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Rs. ${totalSpent.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w900,
+                          const SizedBox(height: 4),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Rs. ${totalSpent.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Text(
-                          'Budget',
-                          style: TextStyle(
-                            color: Color(0xFF64748B),
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 4,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'Budget',
+                            style: TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Rs. ${monthlyBudget.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                            color: Color(0xFF818CF8),
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
+                          const SizedBox(height: 4),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              'Rs. ${monthlyBudget.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                color: Color(0xFF818CF8),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
+                    // ==========================================
                   ],
                 ),
                 const SizedBox(height: 24),
@@ -368,4 +387,4 @@ class Dashboard extends StatelessWidget {
         return const Color(0xFF64748B);
     }
   }
-}
+} 

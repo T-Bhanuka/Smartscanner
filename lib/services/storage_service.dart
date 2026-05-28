@@ -3,9 +3,33 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../types.dart';
 
 class StorageService {
+  static const String _tokenKey = 'jwt_token';
   static const String _receiptsKey = 'receipt_app_pro_v5_data';
   static const String _galleryKey = 'receipt_app_gallery_v5';
 
+  // Token Management
+  static Future<void> saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, token);
+  }
+
+  static Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_tokenKey);
+  }
+
+  static Future<void> clearToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenKey);
+  }
+
+  static Future<bool> isLoggedIn() async {
+    final token = await getToken();
+    return token != null && token.isNotEmpty;
+  }
+
+  // Optional: keep old methods if any offline fallback is needed, or just clear them.
+  // Below we keep them for compatibility if any other part uses them, but the main app will use ApiService.
   static Future<List<Receipt>> getAllReceipts() async {
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString(_receiptsKey);
