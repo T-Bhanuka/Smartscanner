@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:google_mlkit_entity_extraction/google_mlkit_entity_extraction.dart';
 import 'package:image/image.dart' as img_lib;
 
 import 'components/dashboard.dart';
@@ -164,7 +162,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
     setState(() {
       receipts = loadedReceipts;
-      galleryImages = loadedImages..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      galleryImages = loadedImages
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       monthlyBudget = (budgetData['budget'] as num?)?.toDouble() ?? 20000.0;
     });
   }
@@ -189,74 +188,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     });
 
     try {
-      // 1. Text Recognizer eken Photo eke thiyena akuru tika mulin kiyawagannawa
-      final inputImage = InputImage.fromFilePath(imagePath);
-      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
-      
-      String fullText = recognizedText.text;
-      List<String> lines = fullText.split('\n');
-      textRecognizer.close();
-
-      // 2. Aluth Entity Extractor Model eka start karanawa
-      // Meken thama e akuru asse thiyena "Theruma" (Dates, Money) allanne
-      final entityExtractor = EntityExtractor(language: EntityExtractorLanguage.english);
-      final annotations = await entityExtractor.annotateText(fullText);
-
-      String shopName = lines.isNotEmpty ? lines.first.trim() : "Unknown Shop";
-      double totalAmount = 0.0;
-      String date = DateTime.now().toIso8601String(); // Default date eka ada dawasa
-
-      // AI eka hoyagaththa dewal (Annotations) asse yanawa
-      for (final annotation in annotations) {
-        for (final entity in annotation.entities) {
-          
-          // A. Salli Ganan (Money) model eken alluwada balanawa
-          if (entity.type == EntityType.money) {
-            // "Rs 1500" wage aawoth akuru tika ain karala 1500 gannawa
-            String moneyText = annotation.text.replaceAll(RegExp(r'[^0-9.]'), '');
-            double val = double.tryParse(moneyText) ?? 0.0;
-            
-            // Receipt ekaka thiyena loku ma ganana apage "Total" eka widihata gannawa
-            if (val > totalAmount) {
-              totalAmount = val;
-            }
-          }
-          
-          // B. Dawasa (Date/Time) model eken alluwada balanawa
-          else if (entity.type == EntityType.dateTime) {
-            date = annotation.text; // AI eka extract karapu dawasa ehemma gannawa
-          }
-        }
-      }
-      
-      entityExtractor.close();
-
       // Read and compress image file, then convert to base64
       final base64ImageStr = await _compressAndEncodeImage(imagePath);
       final base64Image = 'data:image/jpeg;base64,$base64ImageStr';
 
-      // 3. Database ekata save karanawa (MongoDB via ApiService)
-      final response = await ApiService.createReceipt(
-        storeName: shopName,
-        total: totalAmount,
-        date: date,
-        category: 'Other',
-        rawText: fullText,
+      // 1. Send image to Gemini API for translation and extraction
+      final response = await ApiService.analyzeReceipt(base64Image);
+
+      // 2. Upload image to backend gallery linked to receiptId
+      final String? receiptId =
+          (response['receipt']?['_id'] ??
+                  response['receipt']?['id'] ??
+                  response['_id'] ??
+                  response['id'])
+              ?.toString();
+      debugPrint(
+        'SmartScan: Uploading gallery image linked to receiptId: $receiptId',
       );
 
-      // Upload image to backend gallery
-      final String? receiptId = (response['receipt']?['_id'] ?? response['receipt']?['id'] ?? response['_id'] ?? response['id'])?.toString();
-      debugPrint('SmartScan: Uploading gallery image linked to receiptId: $receiptId');
+      await ApiService.uploadImage(base64Image, receiptId: receiptId);
 
-      await ApiService.uploadImage(
-        base64Image,
-        receiptId: receiptId,
-      );
-
-      // 4. App eke UI eka update karanawa
+      // 3. App eke UI eka update karanawa
       await _loadData();
     } catch (e) {
+      debugPrint('SmartScan: Error processing receipt: $e');
       setState(() => analysisError = "Error scanning: $e");
     } finally {
       setState(() => isAnalyzing = false);
@@ -286,8 +241,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   Future<void> _pickFromGallery() async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    
+    final pickedFile = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      imageQuality: 75,
+    );
+
     if (pickedFile != null) {
       setState(() => isFabOpen = false);
       await _processReceipt(pickedFile.path);
@@ -545,7 +504,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   child: IndexedStack(
                     index: activeTab,
                     children: [
-                      Dashboard(receipts: receipts, monthlyBudget: monthlyBudget),
+                      Dashboard(
+                        receipts: receipts,
+                        monthlyBudget: monthlyBudget,
+                      ),
                       _buildGalleryTab(),
                       _buildHistoryTab(),
                     ],
@@ -560,7 +522,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               child: FloatingActionButton(
                 onPressed: _showImageSourceOptions,
                 backgroundColor: const Color(0xFF8B5CF6),
-                child: Icon(isFabOpen ? Icons.close : Icons.add, color: Colors.white),
+                child: Icon(
+                  isFabOpen ? Icons.close : Icons.add,
+                  color: Colors.white,
+                ),
               ),
             ),
             // Bottom nav
@@ -714,7 +679,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     right: 8,
                     child: IconButton(
                       onPressed: () => _deleteGalleryItem(img.id),
-                      icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                      icon: const Icon(
+                        Icons.delete,
+                        color: Colors.red,
+                        size: 20,
+                      ),
                     ),
                   ),
                 ],
@@ -758,54 +727,125 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Widget _buildHistoryTab() {
     return ListView(
       padding: const EdgeInsets.all(16),
-      children: receipts.map((receipt) => Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF1E293B).withValues(alpha: 0.8),
-          border: Border.all(color: const Color(0xFF334155)),
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Row(
-          children: [
-            Expanded(
+      children: receipts
+          .map(
+            (receipt) => Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B).withValues(alpha: 0.8),
+                border: Border.all(color: const Color(0xFF334155)),
+                borderRadius: BorderRadius.circular(24),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    receipt.storeName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              receipt.storeName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              receipt.date,
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'Total',
+                            style: TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            'Rs. ${receipt.total.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Color(0xFF818CF8),
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () => _deleteReceipt(receipt.id),
+                        icon: const Icon(
+                          Icons.close,
+                          color: Color(0xFFEF4444),
+                          size: 20,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (receipt.items.isNotEmpty) ...[
+                    const Divider(
+                      color: Color(0xFF334155),
+                      height: 24,
+                      thickness: 1,
                     ),
-                  ),
-                  Text(
-                    receipt.date,
-                    style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                  ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        'ITEMS',
+                        style: TextStyle(
+                          color: const Color(0xFF8B5CF6).withValues(alpha: 0.8),
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                    ...receipt.items.map(
+                      (item) => Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              item.name,
+                              style: const TextStyle(
+                                color: Color(0xFFCBD5E1),
+                                fontSize: 14,
+                              ),
+                            ),
+                            Text(
+                              'Rs. ${item.price.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                color: Color(0xFF94A3B8),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-            Column(
-              children: [
-                const Text(
-                  'Rs.',
-                  style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                ),
-                Text(
-                  receipt.total.toStringAsFixed(2),
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            IconButton(
-              onPressed: () => _deleteReceipt(receipt.id),
-              icon: const Icon(Icons.close, color: Color(0xFFEF4444), size: 20),
-            ),
-          ],
-        ),
-      )).toList(),
+          )
+          .toList(),
     );
   }
 
