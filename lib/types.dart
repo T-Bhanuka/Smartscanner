@@ -20,6 +20,8 @@ class Receipt {
   final double total;
   final Category category;
   final int timestamp;
+  String? firestoreId;
+  final String? rawText;
   final String? galleryImageId;
 
   Receipt({
@@ -31,6 +33,8 @@ class Receipt {
     required this.total,
     required this.category,
     required this.timestamp,
+    this.firestoreId,
+    this.rawText,
     this.galleryImageId,
   });
 
@@ -43,14 +47,18 @@ class Receipt {
     'total': total,
     'category': category.name,
     'timestamp': timestamp,
+    'rawText': rawText,
     'galleryImageId': galleryImageId,
+    'firestoreId': firestoreId,
   };
 
   factory Receipt.fromJson(Map<String, dynamic> json) {
     Category parsedCategory = Category.Other;
     try {
       parsedCategory = Category.values.firstWhere(
-        (e) => e.name.toLowerCase() == (json['category'] ?? '').toString().toLowerCase(),
+        (e) =>
+            e.name.toLowerCase() ==
+            (json['category'] ?? '').toString().toLowerCase(),
         orElse: () => Category.Other,
       );
     } catch (_) {}
@@ -83,6 +91,8 @@ class Receipt {
       category: parsedCategory,
       timestamp: parsedTimestamp,
       galleryImageId: json['galleryImageId']?.toString(),
+      firestoreId: json['firestoreId']?.toString(),
+      rawText: json['rawText']?.toString(),
     );
   }
 }
@@ -108,7 +118,9 @@ class ReceiptItem {
     Category parsedCategory = Category.Other;
     try {
       parsedCategory = Category.values.firstWhere(
-        (e) => e.name.toLowerCase() == (json['category'] ?? '').toString().toLowerCase(),
+        (e) =>
+            e.name.toLowerCase() ==
+            (json['category'] ?? '').toString().toLowerCase(),
         orElse: () => Category.Other,
       );
     } catch (_) {}
@@ -125,7 +137,7 @@ class GalleryImage {
   final String id;
   final String base64;
   final int timestamp;
-  final bool isProcessed;
+  bool isProcessed;
   final String? linkedReceiptId;
 
   GalleryImage({
@@ -159,7 +171,9 @@ class GalleryImage {
       id: (json['_id'] ?? json['id'] ?? '').toString(),
       base64: (json['base64'] ?? json['imageUrl'] ?? '').toString(),
       timestamp: parsedTimestamp,
-      isProcessed: json['isProcessed'] == true || json['isProcessed']?.toString() == 'true',
+      isProcessed:
+          json['isProcessed'] == true ||
+          json['isProcessed']?.toString() == 'true',
       linkedReceiptId: (json['linkedReceiptId'] ?? json['receipt'])?.toString(),
     );
   }

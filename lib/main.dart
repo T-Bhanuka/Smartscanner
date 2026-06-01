@@ -7,12 +7,17 @@ import 'package:image_picker/image_picker.dart';
 import 'components/dashboard.dart';
 import 'components/camera_scanner.dart';
 import 'services/storage_service.dart';
+import 'screens/auth/login_screen.dart'; // login screen
+import 'screens/auth/register_screen.dart'; // register screen
 import 'types.dart';
 import 'services/api_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final cameras = await availableCameras();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   runApp(MyApp(cameras: cameras));
 }
 
@@ -32,7 +37,14 @@ class MyApp extends StatelessWidget {
           secondary: Color(0xFF818CF8),
         ),
       ),
-      home: const HomePage(),
+
+      home: const LoginScreen(),
+
+      routes: {
+        '/dashboard': (context) => const HomePage(),
+        '/register': (context) => const RegisterScreen(),
+        '/login': (context) => const LoginScreen(),
+      },
     );
   }
 }
@@ -44,7 +56,7 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   List<Receipt> receipts = [];
   List<GalleryImage> galleryImages = [];
   bool showScanner = false;
@@ -56,10 +68,34 @@ class _HomePageState extends State<HomePage> {
   bool showBudgetModal = false;
   String tempBudget = '20000';
 
+  late AnimationController _fabController;
+  late AnimationController _tabController;
+  late AnimationController _modalController;
+
   @override
   void initState() {
     super.initState();
+    _fabController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _tabController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _modalController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _fabController.dispose();
+    _tabController.dispose();
+    _modalController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -128,13 +164,8 @@ class _HomePageState extends State<HomePage> {
 
     setState(() {
       receipts = loadedReceipts;
-      galleryImages = loadedImages
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      final budgetVal = budgetData['budget'] ?? budgetData['limit'] ?? 20000;
-      monthlyBudget = budgetVal is num
-          ? budgetVal.toDouble()
-          : (double.tryParse(budgetVal.toString()) ?? 20000.0);
-      analysisError = null; // Clear error on success
+      galleryImages = loadedImages..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      monthlyBudget = budget;
     });
   }
 
@@ -158,23 +189,59 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      final bytes = await File(imagePath).readAsBytes();
-      final base64Image = 'data:image/jpeg;base64,${base64Encode(bytes)}';
+      // 1. Text Recognizer eken Photo eke thiyena akuru tika mulin kiyawagannawa
+      final inputImage = InputImage.fromFilePath(imagePath);
+      final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+      
+      String fullText = recognizedText.text;
+      List<String> lines = fullText.split('\n');
+      textRecognizer.close();
 
-      final response = await ApiService.analyzeReceipt(base64Image);
+      // 2. Aluth Entity Extractor Model eka start karanawa
+      // Meken thama e akuru asse thiyena "Theruma" (Dates, Money) allanne
+      final entityExtractor = EntityExtractor(language: EntityExtractorLanguage.english);
+      final annotations = await entityExtractor.annotateText(fullText);
 
-      // Upload to gallery linked to the new receipt
-      try {
-        final receiptData = response['receipt'];
-        final String? receiptId = receiptData != null
-            ? (receiptData['_id'] ?? receiptData['id'])?.toString()
-            : null;
-        await ApiService.uploadImage(base64Image, receiptId: receiptId);
-      } catch (uploadError) {
-        debugPrint('Failed to save receipt image to vault: $uploadError');
+      String shopName = lines.isNotEmpty ? lines.first.trim() : "Unknown Shop";
+      double totalAmount = 0.0;
+      String date = DateTime.now().toIso8601String(); // Default date eka ada dawasa
+
+      // AI eka hoyagaththa dewal (Annotations) asse yanawa
+      for (final annotation in annotations) {
+        for (final entity in annotation.entities) {
+          
+          // A. Salli Ganan (Money) model eken alluwada balanawa
+          if (entity.type == EntityType.money) {
+            // "Rs 1500" wage aawoth akuru tika ain karala 1500 gannawa
+            String moneyText = annotation.text.replaceAll(RegExp(r'[^0-9.]'), '');
+            double val = double.tryParse(moneyText) ?? 0.0;
+            
+            // Receipt ekaka thiyena loku ma ganana apage "Total" eka widihata gannawa
+            if (val > totalAmount) {
+              totalAmount = val;
+            }
+          }
+          
+          // B. Dawasa (Date/Time) model eken alluwada balanawa
+          else if (entity.type == EntityType.dateTime) {
+            date = annotation.text; // AI eka extract karapu dawasa ehemma gannawa
+          }
+        }
       }
+      
+      entityExtractor.close();
 
-      // Receipt is already saved on backend
+      // 3. Database ekata save karanawa
+      await FirebaseFirestore.instance.collection('receipts').add({
+        'storeName': shopName,
+        'totalAmount': totalAmount,
+        'date': date,
+        'category': 'Other', 
+        'rawText': fullText, 
+      });
+
+      // 4. App eke UI eka update karanawa
       await _loadData();
     } catch (e) {
       setState(() => analysisError = "Error scanning: $e");
@@ -186,13 +253,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _pickFromGallery() async {
     final picker = ImagePicker();
-    // imageQuality saha maxWidth eken photo eka 10MB idala 500KB walata wage podi karanawa!
-    final pickedFile = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 50,
-      maxWidth: 1000,
-    );
-
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    
     if (pickedFile != null) {
       setState(() => isFabOpen = false);
       await _processReceipt(pickedFile.path);
@@ -450,10 +512,7 @@ class _HomePageState extends State<HomePage> {
                   child: IndexedStack(
                     index: activeTab,
                     children: [
-                      Dashboard(
-                        receipts: receipts,
-                        monthlyBudget: monthlyBudget,
-                      ),
+                      Dashboard(receipts: receipts, monthlyBudget: monthlyBudget),
                       _buildGalleryTab(),
                       _buildHistoryTab(),
                     ],
@@ -468,10 +527,7 @@ class _HomePageState extends State<HomePage> {
               child: FloatingActionButton(
                 onPressed: _showImageSourceOptions,
                 backgroundColor: const Color(0xFF8B5CF6),
-                child: Icon(
-                  isFabOpen ? Icons.close : Icons.add,
-                  color: Colors.white,
-                ),
+                child: Icon(isFabOpen ? Icons.close : Icons.add, color: Colors.white),
               ),
             ),
             // Bottom nav
@@ -516,18 +572,33 @@ class _HomePageState extends State<HomePage> {
   Widget _buildNavItem(int index, IconData icon, String label) {
     final isActive = activeTab == index;
     return GestureDetector(
-      onTap: () => setState(() => activeTab = index),
+      onTap: () {
+        setState(() => activeTab = index);
+        _tabController.forward(from: 0);
+      },
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            icon,
-            color: isActive ? const Color(0xFF818CF8) : const Color(0xFF64748B),
-            size: 24,
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? const Color(0xFF8B5CF6).withValues(alpha: 0.2)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              icon,
+              color: isActive
+                  ? const Color(0xFF818CF8)
+                  : const Color(0xFF64748B),
+              size: 24,
+            ),
           ),
           const SizedBox(height: 4),
-          Text(
-            label,
+          AnimatedDefaultTextStyle(
+            duration: const Duration(milliseconds: 300),
             style: TextStyle(
               color: isActive
                   ? const Color(0xFF818CF8)
@@ -535,6 +606,7 @@ class _HomePageState extends State<HomePage> {
               fontSize: 9,
               fontWeight: FontWeight.bold,
             ),
+            child: Text(label),
           ),
         ],
       ),
@@ -600,23 +672,16 @@ class _HomePageState extends State<HomePage> {
               ),
               child: Stack(
                 children: [
-                  Positioned.fill(child: _buildGalleryImage(img.base64)),
+                  Container(
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.image, color: Color(0xFF64748B), size: 48),
+                  ),
                   Positioned(
                     top: 8,
                     right: 8,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.5),
-                        shape: BoxShape.circle,
-                      ),
-                      child: IconButton(
-                        onPressed: () => _deleteGalleryItem(img.id),
-                        icon: const Icon(
-                          Icons.delete,
-                          color: Colors.red,
-                          size: 20,
-                        ),
-                      ),
+                    child: IconButton(
+                      onPressed: () => _deleteGalleryItem(img.id),
+                      icon: const Icon(Icons.delete, color: Colors.red, size: 20),
                     ),
                   ),
                 ],
@@ -658,74 +723,56 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHistoryTab() {
-    return ListView(
+    return ListView.builder(
       padding: const EdgeInsets.all(16),
-      children: receipts
-          .map(
-            (receipt) => Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E293B).withValues(alpha: 0.8),
-                border: Border.all(color: const Color(0xFF334155)),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Row(
+      children: receipts.map((receipt) => Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B).withValues(alpha: 0.8),
+          border: Border.all(color: const Color(0xFF334155)),
+          borderRadius: BorderRadius.circular(24),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          receipt.storeName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          receipt.date,
-                          style: const TextStyle(
-                            color: Color(0xFF64748B),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                  Text(
+                    receipt.storeName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  Column(
-                    children: [
-                      const Text(
-                        'Rs.',
-                        style: TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 12,
-                        ),
-                      ),
-                      Text(
-                        receipt.total.toStringAsFixed(2),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  IconButton(
-                    onPressed: () => _deleteReceipt(receipt.id),
-                    icon: const Icon(
-                      Icons.close,
-                      color: Color(0xFFEF4444),
-                      size: 20,
-                    ),
+                  Text(
+                    receipt.date,
+                    style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
                   ),
                 ],
               ),
             ),
-          )
-          .toList(),
+            Column(
+              children: [
+                const Text(
+                  'Rs.',
+                  style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+                ),
+                Text(
+                  receipt.total.toStringAsFixed(2),
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            IconButton(
+              onPressed: () => _deleteReceipt(receipt.id),
+              icon: const Icon(Icons.close, color: Color(0xFFEF4444), size: 20),
+            ),
+          ],
+        ),
+      )).toList(),
     );
   }
 

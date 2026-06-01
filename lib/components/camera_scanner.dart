@@ -14,6 +14,7 @@ class CameraScanner extends StatefulWidget {
 class _CameraScannerState extends State<CameraScanner> {
   CameraController? _controller;
   bool _isProcessing = false;
+  bool _isFlashOn = false;
 
   @override
   void initState() {
@@ -26,6 +27,19 @@ class _CameraScannerState extends State<CameraScanner> {
     _controller = CameraController(cameras[0], ResolutionPreset.medium);
     await _controller!.initialize();
     if (mounted) setState(() {});
+  }
+
+  Future<void> _toggleFlash() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    try {
+      final nextMode = _isFlashOn ? FlashMode.off : FlashMode.torch;
+      await _controller!.setFlashMode(nextMode);
+      setState(() {
+        _isFlashOn = !_isFlashOn;
+      });
+    } catch (e) {
+      debugPrint('Error toggling flashlight: $e');
+    }
   }
 
   @override
@@ -80,16 +94,36 @@ class _CameraScannerState extends State<CameraScanner> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                IconButton(
-                  onPressed: widget.onClose,
-                  icon: const Icon(Icons.close, color: Color(0xFF94A3B8), size: 24),
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFF334155),
-                    padding: const EdgeInsets.all(12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: _toggleFlash,
+                      icon: Icon(
+                        _isFlashOn ? Icons.flash_on : Icons.flash_off,
+                        color: _isFlashOn ? Colors.yellow : const Color(0xFF94A3B8),
+                        size: 24,
+                      ),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFF334155),
+                        padding: const EdgeInsets.all(12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    IconButton(
+                      onPressed: widget.onClose,
+                      icon: const Icon(Icons.close, color: Color(0xFF94A3B8), size: 24),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFF334155),
+                        padding: const EdgeInsets.all(12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

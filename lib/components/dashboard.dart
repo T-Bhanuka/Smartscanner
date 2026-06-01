@@ -7,19 +7,33 @@ class Dashboard extends StatelessWidget {
   final List<Receipt> receipts;
   final double monthlyBudget;
 
-  const Dashboard({super.key, required this.receipts, required this.monthlyBudget});
+  const Dashboard({
+    super.key,
+    required this.receipts,
+    required this.monthlyBudget,
+  });
 
   @override
   Widget build(BuildContext context) {
     final totalSpent = receipts.fold<double>(0.0, (sum, r) => sum + r.total);
-    final budgetProgress = ((totalSpent / monthlyBudget).clamp(0, 1) as double);
+    final budgetProgress = (monthlyBudget > 0)
+        ? (totalSpent / monthlyBudget).clamp(0.0, 1.0)
+        : 0.0;
 
     // Last 7 days spending
     final last7Days = List.generate(7, (i) {
       final date = DateTime.now().subtract(Duration(days: i));
-      final dateFormat = DateFormat('dd.MM.yyyy');
       final dayTotal = receipts
-          .where((r) => dateFormat.parse(r.date.replaceAll('-', '.').replaceAll('/', '.')).day == date.day)
+          .where((r) {
+            try {
+              final parsed = DateTime.parse(r.date);
+              return parsed.day == date.day &&
+                  parsed.month == date.month &&
+                  parsed.year == date.year;
+            } catch (e) {
+              return false; // Skip receipts with invalid dates
+            }
+          })
           .fold<double>(0.0, (sum, r) => sum + r.total);
       return BarChartGroupData(
         x: i,
@@ -42,10 +56,12 @@ class Dashboard extends StatelessWidget {
     final categoryTotals = <Category, double>{};
     for (final receipt in receipts) {
       for (final item in receipt.items) {
-        categoryTotals[item.category] = (categoryTotals[item.category] ?? 0) + item.price;
+        categoryTotals[item.category] =
+            (categoryTotals[item.category] ?? 0) + item.price;
       }
       if (receipt.items.isEmpty) {
-        categoryTotals[receipt.category] = (categoryTotals[receipt.category] ?? 0) + receipt.total;
+        categoryTotals[receipt.category] =
+            (categoryTotals[receipt.category] ?? 0) + receipt.total;
       }
     }
 
@@ -65,17 +81,19 @@ class Dashboard extends StatelessWidget {
     }).toList();
 
     if (pieSections.isEmpty) {
-      pieSections.add(PieChartSectionData(
-        value: 1,
-        title: 'No Expenses',
-        color: const Color(0xFF1E293B),
-        radius: 60,
-        titleStyle: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          color: Color(0xFF64748B),
+      pieSections.add(
+        PieChartSectionData(
+          value: 1,
+          title: 'No Expenses',
+          color: const Color(0xFF1E293B),
+          radius: 60,
+          titleStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF64748B),
+          ),
         ),
-      ));
+      );
     }
 
     return SingleChildScrollView(
@@ -178,7 +196,9 @@ class Dashboard extends StatelessWidget {
                     widthFactor: budgetProgress,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: totalSpent > monthlyBudget ? const Color(0xFFEF4444) : const Color(0xFF8B5CF6),
+                        color: totalSpent > monthlyBudget
+                            ? const Color(0xFFEF4444)
+                            : const Color(0xFF8B5CF6),
                         borderRadius: BorderRadius.circular(4),
                       ),
                     ),
@@ -199,7 +219,9 @@ class Dashboard extends StatelessWidget {
                     Text(
                       '${(budgetProgress * 100).toStringAsFixed(1)}% Utilized',
                       style: TextStyle(
-                        color: totalSpent > monthlyBudget ? const Color(0xFFEF4444) : const Color(0xFF8B5CF6),
+                        color: totalSpent > monthlyBudget
+                            ? const Color(0xFFEF4444)
+                            : const Color(0xFF8B5CF6),
                         fontSize: 12,
                         fontWeight: FontWeight.w900,
                       ),
@@ -245,8 +267,12 @@ class Dashboard extends StatelessWidget {
                           sideTitles: SideTitles(
                             showTitles: true,
                             getTitlesWidget: (value, meta) {
+                              final index = value.toInt();
+                              if (index < 0 || index >= dayLabels.length) {
+                                return const SizedBox.shrink();
+                              }
                               return Text(
-                                dayLabels[value.toInt()],
+                                dayLabels[index],
                                 style: const TextStyle(
                                   color: Color(0xFF64748B),
                                   fontSize: 12,
@@ -270,8 +296,12 @@ class Dashboard extends StatelessWidget {
                             },
                           ),
                         ),
-                        topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                        rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                        topTitles: AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        rightTitles: AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
                       ),
                       borderData: FlBorderData(show: false),
                       gridData: FlGridData(show: false),
@@ -326,9 +356,14 @@ class Dashboard extends StatelessWidget {
                     final color = _getCategoryColor(category);
                     return Container(
                       width: (MediaQuery.of(context).size.width - 72) / 2,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       decoration: BoxDecoration(
-                        color: isActive ? color.withValues(alpha: 0.1) : Colors.transparent,
+                        color: isActive
+                            ? color.withValues(alpha: 0.1)
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
@@ -345,7 +380,9 @@ class Dashboard extends StatelessWidget {
                           Text(
                             category.name,
                             style: TextStyle(
-                              color: isActive ? Colors.white : const Color(0xFF64748B),
+                              color: isActive
+                                  ? Colors.white
+                                  : const Color(0xFF64748B),
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
                             ),
@@ -387,4 +424,4 @@ class Dashboard extends StatelessWidget {
         return const Color(0xFF64748B);
     }
   }
-} 
+}
