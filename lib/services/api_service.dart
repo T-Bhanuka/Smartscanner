@@ -3,7 +3,11 @@ import 'dart:convert';
 import 'storage_service.dart';
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:3005/api';
+  // Use http://localhost:3005/api for Emulator / USB debugging with adb reverse
+  // static const String baseUrl = 'http://localhost:3005/api';
+  
+  // Use Laptop's Wi-Fi IP (both laptop and phone must be on the same Wi-Fi)
+  static const String baseUrl = 'http://192.168.1.9:3005/api';
 
   static Future<Map<String, dynamic>> _makeRequest(
     String method,
