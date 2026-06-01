@@ -1,5 +1,5 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
+import 'package:flutter/foundation.dart';
+import 'api_service.dart';
 import '../services/storage_service.dart';
 import '../types.dart';
 
@@ -26,30 +26,26 @@ class ReceiptRepository {
   ) async {
     final updatedReceipts = [receipt, ...currentReceipts];
     await saveReceipts(updatedReceipts, monthlyBudget);
-    final docId = await _publishReceiptToFirestore(receipt);
+    final docId = await _publishReceiptToBackend(receipt);
     if (docId != null) {
-      // persist the firestoreId into local storage
       receipt.firestoreId = docId;
       await saveReceipts(updatedReceipts, monthlyBudget);
     }
   }
 
-  static Future<String?> _publishReceiptToFirestore(Receipt receipt) async {
+  static Future<String?> _publishReceiptToBackend(Receipt receipt) async {
     try {
-      final docRef = await FirebaseFirestore.instance.collection('receipts').add({
-        'localId': receipt.id,
-        'storeName': receipt.storeName,
-        'totalAmount': receipt.total,
-        'date': receipt.date,
-        'time': receipt.time,
-        'category': receipt.category.name,
-        'rawText': receipt.rawText ?? '',
-        'items': receipt.items.map((item) => item.toJson()).toList(),
-        'timestamp': receipt.timestamp,
-      });
-      return docRef.id;
+      final response = await ApiService.createReceipt(
+        storeName: receipt.storeName,
+        total: receipt.total,
+        date: receipt.date,
+        category: receipt.category.name,
+        rawText: receipt.rawText ?? '',
+        timestamp: receipt.timestamp,
+      );
+      return response['_id'] ?? response['id']?.toString();
     } catch (e) {
-      // Firestore publish failed; leave local data intact and surface the error upstream if needed.
+      debugPrint('Failed to save receipt to MongoDB backend: $e');
       return null;
     }
   }

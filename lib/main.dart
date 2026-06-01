@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:google_mlkit_entity_extraction/google_mlkit_entity_extraction.dart';
+import 'package:image/image.dart' as img_lib;
 
 import 'components/dashboard.dart';
 import 'components/camera_scanner.dart';
@@ -15,9 +18,6 @@ import 'services/api_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final cameras = await availableCameras();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
   runApp(MyApp(cameras: cameras));
 }
 
@@ -165,7 +165,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     setState(() {
       receipts = loadedReceipts;
       galleryImages = loadedImages..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      monthlyBudget = budget;
+      monthlyBudget = (budgetData['budget'] as num?)?.toDouble() ?? 20000.0;
     });
   }
 
@@ -232,14 +232,27 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       
       entityExtractor.close();
 
-      // 3. Database ekata save karanawa
-      await FirebaseFirestore.instance.collection('receipts').add({
-        'storeName': shopName,
-        'totalAmount': totalAmount,
-        'date': date,
-        'category': 'Other', 
-        'rawText': fullText, 
-      });
+      // Read and compress image file, then convert to base64
+      final base64ImageStr = await _compressAndEncodeImage(imagePath);
+      final base64Image = 'data:image/jpeg;base64,$base64ImageStr';
+
+      // 3. Database ekata save karanawa (MongoDB via ApiService)
+      final response = await ApiService.createReceipt(
+        storeName: shopName,
+        total: totalAmount,
+        date: date,
+        category: 'Other',
+        rawText: fullText,
+      );
+
+      // Upload image to backend gallery
+      final String? receiptId = (response['receipt']?['_id'] ?? response['receipt']?['id'] ?? response['_id'] ?? response['id'])?.toString();
+      debugPrint('SmartScan: Uploading gallery image linked to receiptId: $receiptId');
+
+      await ApiService.uploadImage(
+        base64Image,
+        receiptId: receiptId,
+      );
 
       // 4. App eke UI eka update karanawa
       await _loadData();
@@ -247,6 +260,26 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       setState(() => analysisError = "Error scanning: $e");
     } finally {
       setState(() => isAnalyzing = false);
+    }
+  }
+
+  Future<String> _compressAndEncodeImage(String filePath) async {
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      final image = img_lib.decodeImage(bytes);
+      if (image == null) {
+        return base64Encode(bytes);
+      }
+      // Resize to max width 800px for speed and compactness
+      final resized = image.width > 800
+          ? img_lib.copyResize(image, width: 800)
+          : image;
+      final compressed = img_lib.encodeJpg(resized, quality: 75);
+      return base64Encode(compressed);
+    } catch (e) {
+      debugPrint('SmartScan: Compression error, fallback: $e');
+      final bytes = await File(filePath).readAsBytes();
+      return base64Encode(bytes);
     }
   }
   // ==========================================================
@@ -674,7 +707,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 children: [
                   Container(
                     alignment: Alignment.center,
-                    child: const Icon(Icons.image, color: Color(0xFF64748B), size: 48),
+                    child: _buildGalleryImage(img.base64),
                   ),
                   Positioned(
                     top: 8,
@@ -723,7 +756,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildHistoryTab() {
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.all(16),
       children: receipts.map((receipt) => Container(
         margin: const EdgeInsets.only(bottom: 16),

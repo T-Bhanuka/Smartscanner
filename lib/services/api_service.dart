@@ -153,6 +153,28 @@ class ApiService {
     await _makeRequest('DELETE', '/receipts/$id');
   }
 
+  static Future<Map<String, dynamic>> createReceipt({
+    required String storeName,
+    required double total,
+    required String date,
+    required String category,
+    required String rawText,
+    int? timestamp,
+  }) async {
+    return await _makeRequest(
+      'POST',
+      '/receipts',
+      body: {
+        'storeName': storeName,
+        'total': total,
+        'date': date,
+        'category': category,
+        'rawText': rawText,
+        'timestamp': timestamp ?? DateTime.now().millisecondsSinceEpoch,
+      },
+    );
+  }
+
   // Gallery
   static Future<Map<String, dynamic>> uploadImage(String imageData, {String? receiptId}) async {
     return await _makeRequest(
