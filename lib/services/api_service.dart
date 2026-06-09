@@ -7,7 +7,7 @@ class ApiService {
   // static const String baseUrl = 'http://localhost:3005/api';
   
   // Use Laptop's Wi-Fi IP (both laptop and phone must be on the same Wi-Fi)
-  static const String baseUrl = 'http://192.168.1.9:3005/api';
+  static const String baseUrl = 'http://192.168.8.111:3005/api';
 
   static Future<Map<String, dynamic>> _makeRequest(
     String method,
@@ -53,9 +53,18 @@ class ApiService {
         }
         return {};
       } else {
+        try {
+          final errorBody = jsonDecode(response.body);
+          if (errorBody is Map && errorBody.containsKey('error')) {
+            throw Exception(errorBody['error']);
+          }
+        } catch (_) {}
         throw Exception('API Error: ${response.statusCode}');
       }
     } catch (e) {
+      if (e.toString().startsWith('Exception:')) {
+        rethrow;
+      }
       throw Exception('Request failed: $e');
     }
   }

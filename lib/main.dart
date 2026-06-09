@@ -212,7 +212,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       await _loadData();
     } catch (e) {
       debugPrint('SmartScan: Error processing receipt: $e');
-      setState(() => analysisError = "Error scanning: $e");
+      final cleanMsg = e.toString().replaceFirst('Exception: ', '');
+      setState(() => analysisError = "Error scanning: $cleanMsg");
     } finally {
       setState(() => isAnalyzing = false);
     }
