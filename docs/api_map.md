@@ -1,79 +1,96 @@
-# API Map — SmartScanner
+# REST API Map
 
-This document maps network/Firebase/Storage/ML Kit integrations found in the `lib/` source.
+This document maps all REST network integrations implemented in [api_service.dart](file:///c:/Flutter/flutter_windows_3.41.9-stable/development/first_project/lib/services/api_service.dart) connecting to the backend server.
 
-- **Service:** Firebase Firestore
-  - **Collection / Endpoint:** `receipts` (collection)
-  - **Trigger:** `ReceiptRepository.addReceipt()` → calls `_publishReceiptToFirestore()` after local save
-  - **Payload (JSON fields):**
-    - `storeName` (String)
-    - `totalAmount` / `total` (Number)
-    - `date` (String)
-    - `time` (String)
-    - `category` (String, `Category.name`)
-    - `rawText` (String)
-    - `items` (Array of objects from `ReceiptItem.toJson()`)
-    - `timestamp` (Number)
-  - **Source:** `lib/services/receipt_repository.dart` (uses `FirebaseFirestore.instance.collection('receipts').add({...})`)
+---
 
-- **Service:** Local Storage (SharedPreferences)
-  - **Keys:**
-    - `_receiptsKey = 'receipt_app_pro_v5_data'` — stores JSON object: `{'receipts': [...], 'monthlyBudget': <number>}`
-    - `_galleryKey = 'receipt_app_gallery_v5'` — stores JSON array of gallery image objects
-  - **Triggers:** `StorageService.saveReceipts()`, `getAllReceipts()`, `getMonthlyBudget()`, `saveGalleryImage()`, `deleteGalleryImage()`
-  - **Payload Shapes:**
-    - Receipt JSON: matches `Receipt.toJson()` (fields: `id`, `storeName`, `date`, `time`, `items`, `total`, `category`, `timestamp`, `rawText`, `galleryImageId`)
-    - Gallery image JSON: matches `GalleryImage.toJson()` (fields: `id`, `base64`, `timestamp`, `isProcessed`, `linkedReceiptId`)
-  - **Source:** `lib/services/storage_service.dart`
+## Base Configuration
 
-- **Service:** Google ML Kit — Text Recognition
-  - **Library / Class:** `google_mlkit_text_recognition` → `TextRecognizer(script: TextRecognitionScript.latin)`
-  - **Trigger:** `ReceiptProcessingService.processReceiptImage(String imagePath)`
-  - **Input:** `InputImage.fromFilePath(imagePath)`
-  - **Output Used:** `recognizedText.text` (full OCR text) → stored as `rawText` on `Receipt`
-  - **Notes (implementation):** recognizer closed after use (`textRecognizer.close()`)
-  - **Source:** `lib/services/receipt_processing_service.dart`
+*   **URL:** `http://192.168.1.11:3005/api`
+*   **Request Headers:**
+    *   `Content-Type: application/json`
+    *   `Authorization: Bearer <JWT Token>` (for endpoints requiring auth)
 
-- **Service:** Google ML Kit — Entity Extraction
-  - **Library / Class:** `google_mlkit_entity_extraction` → `EntityExtractor(language: EntityExtractorLanguage.english)`
-  - **Trigger:** Same as Text Recognition: `ReceiptProcessingService.processReceiptImage()`
-  - **Input:** raw OCR text (`fullText`)
-  - **Behavior / Payload:** `entityExtractor.annotateText(fullText)` returns annotations. Implementation inspects entities for:
-    - `EntityType.money` — parses numeric amounts, selects largest as `total`
-    - `EntityType.dateTime` — may override `date`
-  - **Source:** `lib/services/receipt_processing_service.dart`
+---
 
-- **Service:** Gemini (Generative Language API via HTTP)
-  - **Endpoint:** `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_apiKey`
-  - **Trigger:** `GeminiService.analyzeReceipt(String base64Image)` (manual call in code; service exists in `lib/services/gemini_service.dart`)
-  - **Request Method / Headers:** `POST`, `Content-Type: application/json`
-  - **Request Payload:** JSON body containing `contents` (prompt text + `inlineData` with `mimeType: 'image/jpeg'` and `data: base64Image`) and `generationConfig` requesting `responseMimeType: 'application/json'` and a response schema (expects fields like `isReadable`, `storeName`, `date`, `time`, `total`, `category`, `items` array with `name`, `price`, `category`).
-  - **Response Handling:** Expects 200; parses `body['candidates'][0]['content']['parts'][0]['text']` as JSON
-  - **Source:** `lib/services/gemini_service.dart`
+## Endpoints Mapping
 
-- **Config:** Firebase Storage Bucket
-  - **Value:** `receptscanner-2878a.firebasestorage.app` (present in `lib/firebase_options.dart`)
-  - **Notes:** Bucket configured in `firebase_options.dart` but no direct `FirebaseStorage` API usage found in `lib/`.
+### 1. User Authentication
 
-- **Network Libraries Observed:**
-  - `package:http/http.dart` used by `GeminiService` for POST requests
-  - No other external HTTP endpoints found in `lib/` besides the Gemini endpoint
+#### POST `/auth/register`
+*   **Trigger:** `ApiService.register(username, email, password)`
+*   **Auth Required:** No
+*   **Payload:** `{ "name": name, "email": email, "password": password }`
+*   **Response:** `{ "token": "<JWT Token String>" }`
 
-- **Where These Are Called / Triggers in App Flow:**
-  - Receipt processing (camera/gallery) → `ReceiptProcessingService.processReceiptImage()` (ML Kit OCR + entity extraction) → constructs `Receipt` object
-  - Saving a processed receipt → `ReceiptRepository.addReceipt()` → saves locally via `StorageService.saveReceipts()` and publishes to Firestore via `_publishReceiptToFirestore()`
-  - Gallery image lifecycle → `StorageService.saveGalleryImage()` / `deleteGalleryImage()`
-  - Gemini analysis is available via `GeminiService.analyzeReceipt()` but is not automatically invoked by repository/service code (implement as optional enhancement)
+#### POST `/auth/login`
+*   **Trigger:** `ApiService.login(email, password)`
+*   **Auth Required:** No
+*   **Payload:** `{ "email": email, "password": password }`
+*   **Response:** `{ "token": "<JWT Token String>" }`
 
-Files referenced:
-- `lib/services/receipt_repository.dart`
-- `lib/services/storage_service.dart`
-- `lib/services/receipt_processing_service.dart`
-- `lib/services/gemini_service.dart`
-- `lib/types.dart`
-- `lib/firebase_options.dart`
+#### GET `/auth/profile`
+*   **Trigger:** `ApiService.getProfile()`
+*   **Auth Required:** Yes
+*   **Response:** User account data dictionary object.
 
+#### PUT `/auth/profile`
+*   **Trigger:** `ApiService.updateProfile({name, monthlyBudget})`
+*   **Auth Required:** Yes
+*   **Payload:** `{ "name": name, "monthlyBudget": budget }`
 
-If you'd like, I can:
-- Add direct code links to the specific lines for each mapping, or
-- Run a quick pass to find any other network/third-party usages (e.g., analytics, crash reporting) across the repo.
+---
+
+### 2. Receipts & Scanning
+
+#### POST `/receipts/analyze`
+*   **Trigger:** `ApiService.analyzeReceipt(base64Image)`
+*   **Auth Required:** Yes
+*   **Payload:** `{ "imageData": "data:image/jpeg;base64,..." }`
+*   **Response:** `{ "receipt": { "_id": "...", "storeName": "...", "total": 0.0, ... } }`
+
+#### GET `/receipts`
+*   **Trigger:** `ApiService.getAllReceipts({month, category, skip, limit})`
+*   **Auth Required:** Yes
+*   **Response:** `{ "receipts": [ { "_id": "...", "storeName": "...", "total": 45.5, ... } ] }`
+
+#### PUT `/receipts/:id`
+*   **Trigger:** `ApiService.updateReceipt(id, {category, tags, notes})`
+*   **Auth Required:** Yes
+*   **Payload:** `{ "category": "...", "tags": [], "notes": "..." }`
+
+#### DELETE `/receipts/:id`
+*   **Trigger:** `ApiService.deleteReceipt(id)`
+*   **Auth Required:** Yes
+
+---
+
+### 3. Vault Gallery Images
+
+#### POST `/gallery/upload`
+*   **Trigger:** `ApiService.uploadImage(base64Image, {receiptId})`
+*   **Auth Required:** Yes
+*   **Payload:** `{ "imageData": "data:image/jpeg;base64,...", "receiptId": "..." }`
+
+#### GET `/gallery`
+*   **Trigger:** `ApiService.getGalleryImages({skip, limit})`
+*   **Auth Required:** Yes
+*   **Response:** `{ "images": [ { "_id": "...", "base64": "...", "timestamp": ... } ] }`
+
+#### DELETE `/gallery/:id`
+*   **Trigger:** `ApiService.deleteGalleryImage(id)`
+*   **Auth Required:** Yes
+
+---
+
+### 4. Budgets
+
+#### GET `/budget/:month`
+*   **Trigger:** `ApiService.getBudget(month)` (format: `YYYY-MM`)
+*   **Auth Required:** Yes
+*   **Response:** `{ "budget": 20000.0 }`
+
+#### PUT `/budget/:month`
+*   **Trigger:** `ApiService.updateBudget(month, budget)`
+*   **Auth Required:** Yes
+*   **Payload:** `{ "budget": 20000.0 }`

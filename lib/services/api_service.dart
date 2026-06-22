@@ -7,9 +7,9 @@ class ApiService {
   // static const String baseUrl = 'http://localhost:3005/api';
   
   // Use Laptop's Wi-Fi IP (both laptop and phone must be on the same Wi-Fi)
-  static const String baseUrl = 'http://192.168.8.111:3005/api';
+  static const String baseUrl = 'http://192.168.8.108:3005/api';
 
-  static Future<Map<String, dynamic>> _makeRequest(
+  static Future<dynamic> _makeRequest(
     String method,
     String endpoint, {
     dynamic body,
@@ -53,12 +53,17 @@ class ApiService {
         }
         return {};
       } else {
+        String? errorMessage;
         try {
           final errorBody = jsonDecode(response.body);
           if (errorBody is Map && errorBody.containsKey('error')) {
-            throw Exception(errorBody['error']);
+            errorMessage = errorBody['error']?.toString();
           }
         } catch (_) {}
+
+        if (errorMessage != null) {
+          throw Exception(errorMessage);
+        }
         throw Exception('API Error: ${response.statusCode}');
       }
     } catch (e) {
@@ -123,17 +128,29 @@ class ApiService {
     );
   }
 
+  static Future<Map<String, dynamic>> analyzeReceiptText(String text) async {
+    return await _makeRequest(
+      'POST',
+      '/receipts/analyze-text',
+      body: {
+        'text': text,
+      },
+    );
+  }
+
   static Future<List<dynamic>> getAllReceipts({
     String? month,
     String? category,
     int skip = 0,
     int limit = 20,
+    String? targetUserId,
   }) async {
     String query = '';
     final params = <String, String>{};
     
     if (month != null) params['month'] = month;
     if (category != null) params['category'] = category;
+    if (targetUserId != null) params['targetUserId'] = targetUserId;
     params['skip'] = skip.toString();
     params['limit'] = limit.toString();
 
@@ -213,8 +230,9 @@ class ApiService {
   }
 
   // Budget
-  static Future<Map<String, dynamic>> getBudget(String month) async {
-    return await _makeRequest('GET', '/budget/$month');
+  static Future<Map<String, dynamic>> getBudget(String month, {String? targetUserId}) async {
+    String query = targetUserId != null ? '?targetUserId=$targetUserId' : '';
+    return await _makeRequest('GET', '/budget/$month$query');
   }
 
   static Future<void> updateBudget(String month, double budget) async {
@@ -288,5 +306,40 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getUserProfile(String userId) async {
     return await _makeRequest('GET', '/social/users/$userId');
+  }
+
+  static Future<List<dynamic>> getFamilyConnections() async {
+    final response = await _makeRequest('GET', '/family/connections');
+    return response as List<dynamic>;
+  }
+
+  static Future<String> getAiBudgetAdvice(String token, {String? targetUserId}) async {
+    String query = targetUserId != null ? '?targetUserId=$targetUserId' : '';
+    final url = Uri.parse('$baseUrl/budget/ai-advice$query');
+    final response = await http.get(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final data = jsonDecode(response.body);
+      return data['advice'] ?? '';
+    } else {
+      String? errorMessage;
+      try {
+        final errorBody = jsonDecode(response.body);
+        if (errorBody is Map && errorBody.containsKey('error')) {
+          errorMessage = errorBody['error']?.toString();
+        }
+      } catch (_) {}
+
+      if (errorMessage != null) {
+        throw Exception(errorMessage);
+      }
+      throw Exception('API Error: ${response.statusCode}');
+    }
   }
 }

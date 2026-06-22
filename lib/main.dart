@@ -10,6 +10,7 @@ import 'components/camera_scanner.dart';
 import 'services/storage_service.dart';
 import 'screens/auth/login_screen.dart'; // login screen
 import 'screens/auth/register_screen.dart'; // register screen
+import 'screens/family_sharing_screen.dart'; // family sharing screen
 import 'types.dart';
 import 'services/api_service.dart';
 
@@ -42,6 +43,7 @@ class MyApp extends StatelessWidget {
         '/dashboard': (context) => const HomePage(),
         '/register': (context) => const RegisterScreen(),
         '/login': (context) => const LoginScreen(),
+        '/family': (context) => const FamilySharingScreen(),
       },
     );
   }
@@ -65,6 +67,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int activeTab = 0;
   bool showBudgetModal = false;
   String tempBudget = '20000';
+  String? selectedUserId;
+  List<dynamic> familyConnections = [];
 
   late AnimationController _fabController;
   late AnimationController _tabController;
@@ -147,7 +151,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _fetchData() async {
-    final receiptsData = await ApiService.getAllReceipts();
+    final receiptsData = await ApiService.getAllReceipts(
+      targetUserId: selectedUserId,
+    );
     final loadedReceipts = (receiptsData)
         .map((r) => Receipt.fromJson(r))
         .toList();
@@ -158,13 +164,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         .toList();
 
     final currentMonth = DateTime.now().toIso8601String().substring(0, 7);
-    final budgetData = await ApiService.getBudget(currentMonth);
+    final budgetData = await ApiService.getBudget(
+      currentMonth,
+      targetUserId: selectedUserId,
+    );
+
+    List<dynamic> connections = [];
+    try {
+      connections = await ApiService.getFamilyConnections();
+    } catch (e) {
+      debugPrint('Error loading family connections: $e');
+    }
 
     setState(() {
       receipts = loadedReceipts;
       galleryImages = loadedImages
         ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       monthlyBudget = (budgetData['budget'] as num?)?.toDouble() ?? 20000.0;
+      familyConnections = connections;
     });
   }
 
@@ -213,7 +230,33 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     } catch (e) {
       debugPrint('SmartScan: Error processing receipt: $e');
       final cleanMsg = e.toString().replaceFirst('Exception: ', '');
-      setState(() => analysisError = "Error scanning: $cleanMsg");
+      final cleanLower = cleanMsg.toLowerCase();
+
+      setState(() {
+        if (cleanLower.contains('duplicate')) {
+          analysisError = "Duplicate Receipt";
+        } else {
+          analysisError = "Error scanning: $cleanMsg";
+        }
+      });
+
+      String dialogTitle = "Scan Failed";
+      bool isWarning = false;
+
+      if (cleanLower.contains('duplicate')) {
+        dialogTitle = "Duplicate Receipt";
+        isWarning = true;
+      } else if (cleanLower.contains('receipt') ||
+          cleanLower.contains('blurry') ||
+          cleanLower.contains('invalid') ||
+          cleanLower.contains('unreadable') ||
+          cleanLower.contains('clearer photo') ||
+          cleanLower.contains('clear photo')) {
+        dialogTitle = "Invalid Image";
+        isWarning = true;
+      }
+
+      _showValidationErrorDialog(dialogTitle, cleanMsg, isWarning: isWarning);
     } finally {
       setState(() => isAnalyzing = false);
     }
@@ -287,6 +330,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   onTap: () {
                     Navigator.pop(context);
                     _pickFromGallery();
+                  },
+                ),
+                _buildOptionBtn(
+                  icon: Icons.description_outlined,
+                  label: 'Text',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showPasteBillDialog();
                   },
                 ),
               ],
@@ -374,6 +425,411 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
+  void _showValidationErrorDialog(
+    String title,
+    String message, {
+    bool isWarning = true,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        final accentColor = isWarning
+            ? const Color(0xFFF59E0B)
+            : const Color(0xFFEF4444);
+        return Dialog(
+          backgroundColor: const Color(0xFF1E293B),
+          elevation: 8,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Color(0xFF334155), width: 1.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isWarning
+                        ? Icons.warning_amber_rounded
+                        : Icons.error_outline_rounded,
+                    color: accentColor,
+                    size: 40,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF8B5CF6),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      'Got it',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showPasteBillDialog() {
+    final textController = TextEditingController();
+    bool isAnalyzingText = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Dialog(
+              backgroundColor: const Color(0xFF1E293B),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+                side: const BorderSide(color: Color(0xFF334155), width: 1.5),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons.description_outlined,
+                          color: Color(0xFF8B5CF6),
+                          size: 28,
+                        ),
+                        SizedBox(width: 12),
+                        Text(
+                          'Paste Bill Content',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Paste the raw text of your receipt/bill (e.g., SMS alerts, receipt copies, etc.) to analyze it.',
+                      style: TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 14,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 180),
+                      child: TextField(
+                        controller: textController,
+                        maxLines: null,
+                        minLines: 5,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Paste receipt text here...',
+                          hintStyle: const TextStyle(color: Color(0xFF64748B)),
+                          filled: true,
+                          fillColor: const Color(0xFF0F172A),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: const BorderSide(
+                              color: Color(0xFF8B5CF6),
+                              width: 1.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: isAnalyzingText
+                              ? null
+                              : () => Navigator.pop(context),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        ElevatedButton(
+                          onPressed: isAnalyzingText
+                              ? null
+                              : () async {
+                                  final text = textController.text.trim();
+                                  if (text.isEmpty) return;
+
+                                  setDialogState(() => isAnalyzingText = true);
+
+                                  try {
+                                    final response =
+                                        await ApiService.analyzeReceiptText(
+                                          text,
+                                        );
+
+                                    if (context.mounted) {
+                                      Navigator.pop(context); // Close dialog
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(
+                                          content: const Text(
+                                            'Receipt text analyzed and saved successfully!',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                          backgroundColor: const Color(
+                                            0xFF10B981,
+                                          ),
+                                          behavior: SnackBarBehavior.floating,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                          ),
+                                          margin: const EdgeInsets.all(16),
+                                        ),
+                                      );
+                                    }
+                                    await _loadData(); // Refresh UI
+                                  } catch (e) {
+                                    if (context.mounted) {
+                                      setDialogState(
+                                        () => isAnalyzingText = false,
+                                      );
+                                      final cleanMsg = e
+                                          .toString()
+                                          .replaceFirst('Exception: ', '');
+                                      final cleanLower = cleanMsg.toLowerCase();
+
+                                      String dialogTitle = "Scan Failed";
+                                      bool isWarning = false;
+
+                                      if (cleanLower.contains('duplicate')) {
+                                        dialogTitle = "Duplicate Receipt";
+                                        isWarning = true;
+                                      } else if (cleanLower.contains(
+                                            'receipt',
+                                          ) ||
+                                          cleanLower.contains('invalid') ||
+                                          cleanLower.contains('unreadable')) {
+                                        dialogTitle = "Invalid Content";
+                                        isWarning = true;
+                                      }
+
+                                      _showValidationErrorDialog(
+                                        dialogTitle,
+                                        cleanMsg,
+                                        isWarning: isWarning,
+                                      );
+                                    }
+                                  }
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF8B5CF6),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 14,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: isAnalyzingText
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  'Analyze',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showLogoutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: Color(0xFF334155), width: 1.5),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444).withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.logout_rounded,
+                    color: Color(0xFFEF4444),
+                    size: 40,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Log Out',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Are you sure you want to log out of your account?',
+                  style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFF334155)),
+                          foregroundColor: const Color(0xFF94A3B8),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          Navigator.pop(context); // Close dialog
+                          await StorageService.clearToken();
+                          if (context.mounted) {
+                            Navigator.pushNamedAndRemoveUntil(
+                              context,
+                              '/login',
+                              (route) => false,
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFEF4444),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'Log Out',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _deleteReceipt(String id) {
     showDialog(
       context: context,
@@ -428,44 +884,69 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Row(
-                        children: [
-                          Icon(
-                            Icons.qr_code_scanner,
-                            color: Colors.white,
-                            size: 28,
-                          ),
-                          SizedBox(width: 12),
-                          Text(
-                            'SmartScan Pro',
-                            style: TextStyle(
+                      GestureDetector(
+                        onTap: _showLogoutDialog,
+                        behavior: HitTestBehavior.opaque,
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.qr_code_scanner,
                               color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
+                              size: 28,
+                            ),
+                            SizedBox(width: 12),
+                            Text(
+                              'SmartScan Pro',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(
+                              Icons.people_outline_rounded,
+                              color: Color(0xFF818CF8),
+                            ),
+                            onPressed: () =>
+                                Navigator.pushNamed(context, '/family'),
+                            tooltip: 'Family Sharing',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF334155),
+                              padding: const EdgeInsets.all(8),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: _changeBudget,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF334155),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                'Budget: Rs. ${monthlyBudget.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
                         ],
-                      ),
-                      GestureDetector(
-                        onTap: _changeBudget,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF334155),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Budget: Rs. ${monthlyBudget.toStringAsFixed(0)}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
                       ),
                     ],
                   ),
@@ -508,6 +989,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       Dashboard(
                         receipts: receipts,
                         monthlyBudget: monthlyBudget,
+                        familyConnections: familyConnections,
+                        selectedUserId: selectedUserId,
+                        onFamilyMemberSelected: (userId) {
+                          setState(() {
+                            selectedUserId = userId;
+                          });
+                          _fetchData();
+                        },
                       ),
                       _buildGalleryTab(),
                       _buildHistoryTab(),

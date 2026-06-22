@@ -6,7 +6,7 @@ class GeminiService {
   // 🚨 API Key eka frontend eken 100% ain kara!
   // Oya Step 2 eken gaththa IP eka methanata danna (Port eka 3005)
   static const String _backendUrl =
-      'http://192.168.8.111:3005/api/receipts/analyze';
+      'http://192.168.8.108:3005/api/receipts/analyze';
 
   // Backend eke 'authenticate' middleware eka thiyena nisa JWT token ekath yawanna ona
   static Future<Map<String, dynamic>> analyzeReceipt(
@@ -37,6 +37,37 @@ class GeminiService {
         final body = jsonDecode(response.body);
 
         // Backend eke 'analysisData' kiyala thama JSON eka ewanne
+        return body['analysisData'];
+      } else {
+        print("Backend Error Body: ${response.body}");
+        throw Exception('Server Error: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Connection Error: $e');
+    }
+  }
+
+  static Future<Map<String, dynamic>> analyzeTextReceipt(
+    String rawText,
+    String token,
+  ) async {
+    const String analyzeTextUrl =
+        'http://192.168.8.108:3005/api/receipts/analyze-text';
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse(analyzeTextUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'text': rawText}),
+          )
+          .timeout(const Duration(seconds: 90));
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final body = jsonDecode(response.body);
         return body['analysisData'];
       } else {
         print("Backend Error Body: ${response.body}");

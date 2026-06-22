@@ -1,40 +1,59 @@
-# Integration Guide (optional)
+# Integration Guide
 
-This short guide covers wiring an external LLM/assistant (e.g., Gemini-style service) and recommendations for unifying local vs Firestore storage.
+This guide details configuring, running, and debugging network connectivity between the Flutter frontend app and the Node.js Express server.
 
-## Gemini / LLM Integration
+---
 
-**Current Status:** [lib/services/gemini_service.dart](lib/services/gemini_service.dart) exists but is **not wired into the main application flow**. The service is implemented but not automatically invoked during receipt processing.
+## 1. Network Endpoint Configuration
 
-### How to Enable Gemini Integration
+Since the app runs on emulators or physical test devices, using `localhost` directly will cause connections to fail. The app must route to the developer computer's network-facing IP.
 
-1. Feature-flag integration behind a runtime config or environment variable (e.g., `ENABLE_GEMINI=true`).
-2. Store API keys in secure platform mechanisms (Android: encrypted preferences / keystore; iOS: Keychain). Avoid hardcoding keys in the repo.
-3. Wire `gemini_service.dart` into [lib/services/receipt_processing_service.dart](lib/services/receipt_processing_service.dart) as an optional enhancement:
-   - Call `GeminiService.analyzeReceipt(base64Image)` after ML Kit extraction.
-   - Use Gemini results to improve item extraction, categorization, or amount validation.
-4. Use request batching and concurrency limits to avoid quota spikes.
-
-### Service Interface
+In [api_service.dart](file:///c:/Flutter/flutter_windows_3.41.9-stable/development/first_project/lib/services/api_service.dart#L10) and [gemini_service.dart](file:///c:/Flutter/flutter_windows_3.41.9-stable/development/first_project/lib/services/gemini_service.dart#L9), verify that `baseUrl` matches your machine's local IP address:
 
 ```dart
-// From lib/services/gemini_service.dart
-Future<String?> analyzeReceipt(String base64Image) async {
-  // Sends image to Gemini API and returns JSON response
-  // Response schema expects: { isReadable, storeName, date, time, total, category, items[] }
+// Use Laptop's Wi-Fi IP (both laptop and phone must be on the same Wi-Fi)
+static const String baseUrl = 'http://192.168.1.11:3005/api';
+```
+
+---
+
+## 2. JWT Token & Session Interceptor
+
+1.  **Storage:** Upon successful `/auth/login` or `/auth/register` API calls, the frontend receives a token and caches it:
+    ```dart
+    await StorageService.saveToken(response['token']);
+    ```
+2.  **Request Decoration:** All authenticated client requests to endpoints in [api_service.dart](file:///c:/Flutter/flutter_windows_3.41.9-stable/development/first_project/lib/services/api_service.dart#L12) call a private handler to inject the token into headers:
+    ```dart
+    final token = await StorageService.getToken();
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    ```
+
+---
+
+## 3. Silent Authentication Flow
+
+To enable quick runtime debugging, `HomePage._loadData` checks for an existing JWT token on startup. If no token is cached, it invokes a silent registration or fallback login script:
+
+```dart
+Future<void> _performSilentAuth() async {
+  try {
+    // Attempt registration
+    await ApiService.register('User', 'user@example.com', 'password123');
+  } catch (e) {
+    // Fallback login
+    await ApiService.login('user@example.com', 'password123');
+  }
 }
 ```
 
-## Storage read/write unification recommendation
-- Current behavior: local-first (SharedPreferences) for app UX; receipts are appended to Firestore but not treated as canonical source.
-- Option A (Local-first, sync-to-cloud): keep SharedPreferences as the UX-first store and keep publishing receipts to Firestore asynchronously. Add reconciliation that maps Firestore document ids back to local receipts.
-- Option B (Cloud-first with offline cache): treat Firestore as canonical and migrate local storage to a cache layer (e.g., Hive or SQLite) that supports merging and sync. This increases complexity but improves multi-device consistency.
+---
 
-Recommendation: start with Option A and implement a small sync layer:
-- When publishing a receipt, await the Firestore add result, capture the doc id, and store it into the local `Receipt` (field `id` or separate `firestoreId`).
-- Add a background reconcile task that compares local receipts with Firestore collection and re-publishes missing items or updates metadata (linkedReceiptId, isProcessed).
+## 4. Troubleshooting Network Failures
 
-## Checklist for PR
-- Add `llm_service.dart` scaffold (feature-flagged).
-- Add secure API key instructions to README and platform-specific setup.
-- Implement Firestore doc id persistence mapping and a reconcile job.
+*   **SocketException:** The mobile device cannot ping the server IP.
+    *   *Fix:* Verify that the mobile device and server host are on the exact same Wi-Fi subnet.
+*   **401 Unauthorized:** The JWT token is invalid or expired.
+    *   *Fix:* The app catches 401 response codes in [main.dart](file:///c:/Flutter/flutter_windows_3.41.9-stable/development/first_project/lib/main.dart#L113), clears the token using `StorageService.clearToken()`, runs the silent auto-auth sequence, and automatically retries the failed data fetch request.
