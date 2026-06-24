@@ -3,6 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../types.dart';
 
+/// A widget that displays the main dashboard view, showing spending statistics.
+///
+/// The [Dashboard] takes a list of [receipts] and a [monthlyBudget] to compute
+/// and present:
+/// - A summary card comparing total spent to the budget.
+/// - A bar chart showing the daily spending trend over the last 7 days.
+/// - A pie chart showing the breakdown of spending by category.
 class Dashboard extends StatelessWidget {
   final List<Receipt> receipts;
   final double monthlyBudget;
@@ -30,7 +37,7 @@ class Dashboard extends StatelessWidget {
           })
           .fold<double>(0.0, (sum, r) => sum + r.total);
       return BarChartGroupData(
-        x: i.toDouble(),
+        x: i,
         barRods: [
           BarChartRodData(
             toY: dayTotal,
@@ -352,6 +359,8 @@ class Dashboard extends StatelessWidget {
     );
   }
 
+  /// Returns a specific [Color] mapped to each [Category] for consistent theming
+  /// across the dashboard's charts.
   Color _getCategoryColor(Category category) {
     switch (category) {
       case Category.Food:

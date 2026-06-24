@@ -3,7 +3,13 @@ import 'package:google_mlkit_entity_extraction/google_mlkit_entity_extraction.da
 
 import '../types.dart';
 
+/// A service responsible for extracting structured data from receipt images.
+/// 
+/// Uses Google ML Kit for on-device OCR (Text Recognition) and Entity Extraction
+/// to parse store names, dates, and amounts. Currently limited to Latin script
+/// and English entities.
 class ReceiptProcessingService {
+  /// Processes an image at [imagePath] and returns a parsed [Receipt] object.
   static Future<Receipt> processReceiptImage(String imagePath) async {
     final inputImage = InputImage.fromFilePath(imagePath);
     final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
@@ -54,6 +60,8 @@ class ReceiptProcessingService {
     );
   }
 
+  /// Heuristic to extract a likely shop name from raw OCR text.
+  /// Currently picks the first non-empty line of text.
   static String _extractShopName(String fullText) {
     final lines = fullText
         .split('\n')

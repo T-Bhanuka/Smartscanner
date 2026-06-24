@@ -2,9 +2,17 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../types.dart';
 
+/// An experimental, alternative OCR and analysis service using Google's Gemini API.
+/// 
+/// NOTE: This service is currently **not integrated** into the main app flow
+/// (see PLAN.md). It supports multi-lingual OCR and more advanced entity mapping.
 class GeminiService {
   static const String _apiKey = 'YOUR_API_KEY_HERE';
 
+  /// Analyzes a [base64Image] string using the Gemini API.
+  /// 
+  /// Returns a JSON-compatible map containing extracted receipt details mapped
+  /// to the required schema (e.g. `storeName`, `total`, `category`, `items`).
   static Future<Map<String, dynamic>> analyzeReceipt(String base64Image) async {
     final categories = Category.values.map((e) => e.name).join(", ");
     final prompt = '''

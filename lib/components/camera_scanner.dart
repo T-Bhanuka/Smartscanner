@@ -1,6 +1,11 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
+/// A full-screen widget that provides a custom camera interface for scanning receipts.
+///
+/// It uses the device's back camera to display a live preview and includes a
+/// viewfinder overlay to guide the user in framing the receipt. When the capture
+/// button is pressed, it captures an image and passes the file path to [onCapture].
 class CameraScanner extends StatefulWidget {
   final Function(String) onCapture;
   final VoidCallback onClose;
@@ -21,6 +26,10 @@ class _CameraScannerState extends State<CameraScanner> {
     _initializeCamera();
   }
 
+  /// Initializes the device's camera.
+  ///
+  /// This method attempts to find and select the back camera. If successful,
+  /// it initializes the [CameraController] with a high resolution preset.
   Future<void> _initializeCamera() async {
     final cameras = await availableCameras();
     final camera = cameras.firstWhere(
@@ -39,6 +48,10 @@ class _CameraScannerState extends State<CameraScanner> {
     super.dispose();
   }
 
+  /// Captures an image using the initialized camera controller.
+  ///
+  /// Prevents multiple captures by checking the [_isProcessing] flag.
+  /// On successful capture, passes the resulting image path to [widget.onCapture].
   Future<void> _captureImage() async {
     if (_controller == null || !_controller!.value.isInitialized || _isProcessing) return;
 

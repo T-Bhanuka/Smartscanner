@@ -19,6 +19,9 @@ void main() async {
   runApp(MyApp(cameras: cameras));
 }
 
+/// The root application widget.
+///
+/// Sets up the main theme, color scheme, and routing to the [HomePage].
 class MyApp extends StatelessWidget {
   final List<CameraDescription> cameras;
 
@@ -40,6 +43,12 @@ class MyApp extends StatelessWidget {
   }
 }
 
+/// The main dashboard and entry point of the application.
+///
+/// Handles the core state of the app, including the list of [receipts],
+/// [galleryImages], and [monthlyBudget]. It orchestrates navigation between
+/// different tabs (Dashboard, Gallery, History), and manages the receipt
+/// processing pipeline.
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -108,6 +117,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // ==========================================================
   // MEKA THAMAI ALUTH "PRO AI BRAIN" EKA 🔥
   // ==========================================================
+  /// Processes the captured or selected image to extract receipt details.
+  ///
+  /// 1. Uses ML Kit's [TextRecognizer] to read all text from the image.
+  /// 2. Uses ML Kit's [EntityExtractor] to find semantic meaning (Money, DateTime).
+  /// 3. Extracts the highest monetary value as the total amount.
+  /// 4. Saves the extracted data to Firestore and reloads the local data.
   Future<void> _processReceipt(String imagePath) async {
     setState(() {
       showScanner = false;
